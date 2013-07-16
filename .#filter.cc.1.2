@@ -1,0 +1,560 @@
+#include "TChain.h"
+#include "TString.h"
+#include "TFile.h"
+#include "TTree.h"
+#include "TPRegexp.h"
+#include "TObjArray.h"
+#include "TLorentzVector.h"
+#include "TSystem.h"
+
+#include "SusyAnalysis/SusyNtuplizer/src/SusyEvent.h"
+#include "Utilities.h"
+#include "ObjectSelector.h"
+#include "ObjectTree.h"
+
+#include <iostream>
+#include <sstream>
+#include <string>
+#include <fstream>
+#include <cmath>
+#include <vector>
+#include <stdexcept>
+#include <set>
+#include <map>
+
+enum Lepton {
+  Electron,
+  Muon,
+  nLepton
+};
+
+enum TreeTypes {
+  Signal,
+  JetFakeAndTrueL,
+  ElFakeAndTrueL,
+  EMObjAndFakeL,
+  JetFakeAndFakeL,
+  ElectronAndTrueL,
+  nTreeTypes
+};
+
+TString const treeNames[] = {
+  "Signal",
+  "JetFakeAndTrueL",
+  "ElFakeAndTrueL",
+  "EMObjAndFakeL",
+  "JetFakeAndFakeL",
+  "ElectronAndTrueL"
+};
+
+template<class C>
+unsigned
+sortIndices(std::vector<unsigned short>& _indices, std::vector<C> const& _objects)
+{
+  std::map<float, unsigned short> sorted;
+  unsigned nI(_indices.size());
+  unsigned iI(0);
+  for(; iI != nI; ++iI){
+    unsigned short index(_indices[iI]);
+    sorted[_objects[index].momentum.Pt()] = index;
+  }
+
+  iI = 0;
+  std::map<float, unsigned short>::reverse_iterator sEnd(sorted.rend());
+  for(std::map<float, unsigned short>::reverse_iterator sItr(sorted.rbegin()); sItr != sEnd; ++sItr)
+    _indices[iI++] = sItr->second;
+
+  return _indices.size();
+}
+
+void
+filter_cms538test(TString const& _configFileName, TObjArray* _urls, TObjArray* _outputName)
+{
+  /* SETUP FROM THE CONFIGURATION FILE */
+  Lepton lepton(nLepton);
+  TString jsonPath;
+  bool savePlots(false);
+  TString sample;
+  std::vector<bool> outputEnabled(nTreeTypes, false);
+  std::vector<TString> hltPaths;
+
+  std::ifstream configFile(_configFileName);
+  if(!configFile.is_open())
+    throw std::invalid_argument("Cannot open config file");
+
+  TPRegexp configPat("^[ ]*([A-Z0-9_]+)[ ]*=[ ]*([^ ].*)$");
+  std::string buf;
+  std::stringstream bufs;
+  TString line;
+  while(true){
+    std::getline(configFile, buf);
+    if(!configFile.good()) break;
+    line = buf;
+
+    if(!configPat.MatchB(line)) continue;
+    TObjArray* matches(configPat.MatchS(line));
+    TString confName(matches->At(1)->GetName());
+    TString confVal(matches->At(2)->GetName());
+
+    if(confName == "LEPTON"){
+      if(confVal == "electron") lepton = Electron;
+      else if(confVal == "muon") lepton = Muon;
+      else throw std::invalid_argument("Lepton name");
+      std::cout << line << std::endl;
+    }
+    else if(confName == "JSON"){
+      jsonPath = confVal;
+      std::cout << line << std::endl;
+    }
+    else if(confName == "SAVEPLOTS"){
+      if(confVal == "true") savePlots = true;
+      std::cout << line << std::endl;
+    }
+    else if(confName == "SAMPLE"){
+      sample = confVal;
+      std::cout << line << std::endl;
+    }
+    else if(confName == "TRIGGERPATHS"){
+      std::cout << "TRIGGERPATHS = ";
+      bufs.clear();
+      bufs.str("");
+      bufs << confVal;
+      while(true){
+        bufs >> buf;
+        std::cout << "\"" << TString(buf) << "\" ";
+        hltPaths.push_back(TString(buf));
+        if(!bufs.good()) break;
+      }
+      std::cout << std::endl;
+    }
+    else if(confName == "OUTPUT"){
+      std::cout << "OUTPUT = ";
+      bufs.clear();
+      bufs.str("");
+      bufs << confVal;
+      while(true){
+        bufs >> buf;
+        std::cout << "\"" << buf << "\" ";
+
+        unsigned iT(0);
+        for(; iT != nTreeTypes; ++iT)
+          if(buf == treeNames[iT]) break;
+        if(iT == nTreeTypes)
+          throw std::invalid_argument("Output tree type");
+
+        outputEnabled[iT] = true;
+
+        if(!bufs.good()) break;
+      }
+      std::cout << std::endl;
+    }
+  }
+
+  unsigned const nHLT(hltPaths.size());
+
+  TString outputBaseName(_outputName->At(0)->GetName());
+  if(!outputBaseName.Contains(".root"))
+    outputBaseName += "/" + sample + ".root";
+  else
+    outputBaseName.ReplaceAll(".root", "_" + sample + ".root");
+
+  /* SETUP DONE */
+
+  /* INITIALIZE OBJECTS AND INPUT */
+
+  susy::GoodLumis goodLumis;
+  susy::ObjectSelector selector;
+  susy::ObjectTree idVars;
+
+  if(jsonPath != ""){
+    if(!goodLumis.parseJSON(jsonPath))
+      throw std::invalid_argument("Failed to parse JSON");
+  }
+
+  if(savePlots){
+    TString idVarName(outputBaseName);
+    idVarName.ReplaceAll(".root", "_idVars.root");
+    idVars.setOutput(idVarName, true, lepton == Electron, lepton == Muon, false);
+  }
+
+  TChain input("susyTree");
+  if(input.AddFileInfoList(_urls) == 0)
+    throw std::invalid_argument("Input list invalid");
+
+  input.SetBranchStatus("*", 0);
+  input.SetBranchStatus("runNumber", 1);
+  input.SetBranchStatus("luminosityBlockNumber", 1);
+  input.SetBranchStatus("eventNumber", 1);
+  input.SetBranchStatus("isRealData", 1);
+  input.SetBranchStatus("metFilterBit", 1);
+  input.SetBranchStatus("hlt*", 1);
+  input.SetBranchStatus("vertices*", 1);
+  input.SetBranchStatus("photons_photons*", 1);
+  input.SetBranchStatus("superClusters*", 1);
+  input.SetBranchStatus("rho25", 1);
+  input.SetBranchStatus("electrons_gsfElectrons*" ,1);
+  input.SetBranchStatus("tracks*", 1);
+  input.SetBranchStatus("muons_muons*", 1);
+
+  susy::Event* event(new susy::Event);
+  event->setInput(input);
+
+  TChain fullInput("susyTree");
+  fullInput.AddFileInfoList(_urls);
+  fullInput.SetBranchStatus("caloJets*", 0);
+
+  susy::Event* fullEvent(new susy::Event);
+  fullEvent->setInput(fullInput);
+
+  /* INITIALIZATION DONE */
+  /* SETUP OUTPUT */
+
+  std::vector<unsigned short>* iPhoton(new std::vector<unsigned short>);
+  std::vector<unsigned short>* iLepton(new std::vector<unsigned short>);
+
+  // One tree for each category
+  std::vector<TTree*> outputs(nTreeTypes, 0);
+
+  for(unsigned iT(0); iT != nTreeTypes; ++iT){
+    if(!outputEnabled[iT]) continue;
+
+    TString outputName(outputBaseName);
+    outputName.ReplaceAll(".root", "_" + treeNames[iT] + ".root");
+    TFile* outFile(TFile::Open(outputName, "recreate"));
+    if(!outFile || outFile->IsZombie())
+      throw std::runtime_error(("Cannot create " + outputName).Data());
+    outFile->cd();
+
+    TObjString configStr;
+    configStr.SetString("LEPTON = " + TString(lepton == Electron ? "electron" : "muon"));
+    configStr.Write();
+    configStr.SetString("JSON = " + jsonPath);
+    configStr.Write();
+    configStr.SetString("SAMPLE = " + sample);
+    configStr.Write();
+
+    outputs[iT] = new TTree("susyTree", "SUSY Event");
+    outputs[iT]->SetAutoSave(10000000);
+    outputs[iT]->Branch("iPhoton", "std::vector<unsigned short>", &iPhoton);
+    outputs[iT]->Branch("iLepton", "std::vector<unsigned short>", &iLepton);
+    fullEvent->addOutput(*outputs[iT]);
+  }
+
+  /* START LOOP */
+
+  enum CountPoints {
+    kAllEvents,
+    kGoodLumi,
+    kMetFilter,
+    kHLT,
+    kGoodVertex,
+    kLeptonSelection,
+    kPhotonSelection = kLeptonSelection + nTreeTypes,
+    nCountPoints = kPhotonSelection + nTreeTypes
+  };
+
+  long iEvent(0);
+  unsigned eventCounter[nCountPoints];
+  // One vector for each category
+  std::vector<std::vector<unsigned short> > selectedPhotons(nTreeTypes);
+  std::vector<std::vector<unsigned short> > selectedLeptons(nTreeTypes);
+
+  while(event->getEntry(iEvent++) > 0){
+    if(iEvent % 1000 == 0) std::cout << "Analyzing event " << iEvent << std::endl;
+
+    for(unsigned iT(0); iT != nTreeTypes; ++iT){
+      selectedPhotons[iT].clear();
+      selectedLeptons[iT].clear();
+    }
+
+    if(savePlots) idVars.initEvent(*event);
+
+    ++eventCounter[kAllEvents];
+
+    if(event->isRealData && !goodLumis.isGoodLumi(event->runNumber, event->luminosityBlockNumber)) continue;
+
+    ++eventCounter[kGoodLumi];
+
+    if(event->isRealData && !event->passMetFilters()) continue;
+
+    ++eventCounter[kMetFilter];
+
+    if(nHLT != 0){
+      unsigned iHLT(0);
+      for(; iHLT != nHLT; ++iHLT)
+        if(event->hltMap.pass(hltPaths[iHLT])) break;
+      if(iHLT == nHLT) continue;
+    }
+
+    ++eventCounter[kHLT];
+
+    unsigned nV(event->vertices.size());
+    unsigned iV(0);
+    for(; iV != nV; ++iV){
+      susy::Vertex& vertex(event->vertices[iV]);
+      if(vertex.ndof >= 4 && std::abs(vertex.position.Z()) < 24. && vertex.position.Perp() < 2.) break;
+    }
+    if(iV == nV) continue;
+
+    ++eventCounter[kGoodVertex];
+
+    susy::ElectronCollection& electrons(event->electrons["gsfElectrons"]);
+    susy::MuonCollection& muons(event->muons["muons"]);
+    susy::PhotonCollection& photons(event->photons["photons"]);
+
+    std::vector<bool> idResults;
+
+    bool hasLepton(false);
+
+    if(lepton == Electron){
+      unsigned nEl(electrons.size());
+      for(unsigned iEl(0); iEl < nEl; ++iEl){
+        susy::Electron& el(electrons[iEl]);
+
+        /* DO WHATEVER CUTS AND SELECT SAMPLES */
+
+        if(el.momentum.Pt() < 25.) continue;
+
+        bool isGood(selector.isGoodElectron(el, *event, susy::ObjectSelector::ElMedium12, &idResults));
+
+        if(savePlots) idVars.save(selector.electronVars);
+
+        //        susy::ObjectSelector::ElectronVars const& vars(selector.electronVars);
+
+        if(isGood){
+          if(outputEnabled[Signal]) selectedLeptons[Signal].push_back(iEl);
+          if(outputEnabled[JetFakeAndTrueL]) selectedLeptons[JetFakeAndTrueL].push_back(iEl);
+          if(outputEnabled[ElFakeAndTrueL]) selectedLeptons[ElFakeAndTrueL].push_back(iEl);
+          if(outputEnabled[ElectronAndTrueL]) selectedLeptons[ElectronAndTrueL].push_back(iEl);
+        }
+        else{
+          // fail either isolation, shower shape, or track-cluster matching
+          bool isFake(idResults[0] && idResults[5] && idResults[6] && idResults[7] && idResults[8] && idResults[9]);
+          if(isFake){
+            if(outputEnabled[EMObjAndFakeL]) selectedLeptons[EMObjAndFakeL].push_back(iEl);
+            if(outputEnabled[JetFakeAndFakeL]) selectedLeptons[JetFakeAndFakeL].push_back(iEl);
+          }
+        }
+      }
+
+      /* SORT INDICES */
+      unsigned nLeptons(0);
+      for(unsigned iT(0); iT != nTreeTypes; ++iT)
+        if(outputEnabled[iT]) nLeptons += sortIndices(selectedLeptons[iT], electrons);
+
+      hasLepton = (nLeptons != 0);
+    }
+    else if(lepton == Muon){
+      unsigned nMu(muons.size());
+      for(unsigned iMu(0); iMu < nMu; ++iMu){
+        susy::Muon& mu(muons[iMu]);
+
+        /* DO WHATEVER CUTS AND SELECT SAMPLES */
+
+        if(mu.momentum.Pt() < 25.) continue;
+
+        bool isGood(selector.isGoodMuon(mu, *event, susy::ObjectSelector::MuTight12, &idResults));
+
+        if(savePlots) idVars.save(selector.muonVars);
+
+        //        susy::ObjectSelector::MuonVars const& vars(selector.muonVars);
+
+        if(isGood){
+          if(outputEnabled[Signal]) selectedLeptons[Signal].push_back(iMu);
+          if(outputEnabled[JetFakeAndTrueL]) selectedLeptons[JetFakeAndTrueL].push_back(iMu);
+          if(outputEnabled[ElFakeAndTrueL]) selectedLeptons[ElFakeAndTrueL].push_back(iMu);
+        }
+        else{
+          // fail isolation
+          bool isFake(idResults[0]);
+          for(unsigned i(1); i != 11; ++i) isFake &= (i == 10 ? !idResults[i] : idResults[i]);
+          if(isFake){
+            if(outputEnabled[EMObjAndFakeL]) selectedLeptons[EMObjAndFakeL].push_back(iMu);
+            if(outputEnabled[JetFakeAndFakeL]) selectedLeptons[JetFakeAndFakeL].push_back(iMu);
+          }
+        }
+      }
+
+      /* SORT INDICES */
+      unsigned nLeptons(0);
+      for(unsigned iT(0); iT != nTreeTypes; ++iT)
+        if(outputEnabled[iT]) nLeptons += sortIndices(selectedLeptons[iT], muons);
+
+      hasLepton = (nLeptons != 0);
+    }
+
+    if(!savePlots && !hasLepton) continue;
+
+    for(unsigned iT(0); iT != nTreeTypes; ++iT)
+      if(outputEnabled[iT] && selectedLeptons[iT].size() > 0) ++eventCounter[kLeptonSelection + iT];
+
+    unsigned nPh(photons.size());
+    for(unsigned iPh(0); iPh < nPh; ++iPh){
+      susy::Photon& ph(photons[iPh]);
+
+      /* DO WHATEVER CUTS AND SELECT SAMPLES */
+
+      if(ph.momentum.Pt() < 25.) continue;
+      if(TMath::Abs(ph.momentum.Eta()) > susy::etaGapBegin) continue;
+
+      bool isGood(selector.isGoodPhoton(ph, *event, susy::ObjectSelector::PhLoose12, &idResults));
+
+      if(savePlots) idVars.save(selector.photonVars);
+
+      //      susy::ObjectSelector::PhotonVars const& vars(selector.photonVars);
+
+      if(isGood){
+        if(outputEnabled[Signal]) selectedPhotons[Signal].push_back(iPh);
+        if(outputEnabled[EMObjAndFakeL]) selectedPhotons[EMObjAndFakeL].push_back(iPh);
+      }
+      else if(idResults[0] && idResults[2] && idResults[5] && idResults[6]){
+        if(!idResults[1] && idResults[3] && idResults[4]){
+          if(outputEnabled[ElFakeAndTrueL]) selectedPhotons[ElFakeAndTrueL].push_back(iPh);
+        }
+        else if(idResults[1]){
+          if(outputEnabled[JetFakeAndTrueL]) selectedPhotons[JetFakeAndTrueL].push_back(iPh);
+          if(outputEnabled[JetFakeAndFakeL]) selectedPhotons[JetFakeAndFakeL].push_back(iPh);
+        }
+      }
+    }
+
+    if(savePlots) idVars.fill();
+
+    if(!hasLepton) continue;
+
+    /* SORT INDICES */
+    unsigned nPhotons(0);
+    for(unsigned iT(0); iT != nTreeTypes; ++iT)
+      if(outputEnabled[iT]) nPhotons += sortIndices(selectedPhotons[iT], photons);
+
+    if(!outputEnabled[ElectronAndTrueL] && nPhotons == 0) continue;
+
+    /* RESOLVE OVERLAPS */
+    unsigned pass(0);
+
+    for(unsigned iT(0); iT != nTreeTypes; ++iT){
+      if(!outputEnabled[iT]) continue;
+
+      std::vector<unsigned short>& leptonIndices(selectedLeptons[iT]);
+      std::vector<unsigned short>& photonIndices(selectedPhotons[iT]);
+
+      switch(iT){
+      case ElectronAndTrueL:
+        if(leptonIndices.size() > 1)
+          pass |= (1 << iT);
+        continue;
+        break;
+      default:
+        if(leptonIndices.size() == 0 || photonIndices.size() == 0)
+          continue;
+      }
+
+      unsigned nL(leptonIndices.size());
+      unsigned nP(photonIndices.size());
+      unsigned iP(0);
+      for(; iP != nP; ++iP){
+        susy::Photon& photon(photons[photonIndices[iP]]);
+        unsigned iL(0);
+        if(lepton == Electron){
+          for(; iL != nL; ++iL){
+            susy::Electron& electron(electrons[leptonIndices[iL]]);
+            if(electron.momentum.DeltaR(photon.momentum) < 0.1){
+              if(iT == ElFakeAndTrueL && (iEvent + iL) % 2 == 0){ // randomize electron or photon rejection
+                leptonIndices.erase(leptonIndices.begin() + iL);
+                --iL;
+                --nL;
+                continue;
+              }
+              break;
+            }
+          }
+        }
+        else if(lepton == Muon){
+          for(; iL != nL; ++iL){
+            susy::Muon& muon(muons[leptonIndices[iL]]);
+            if(muon.momentum.DeltaR(photon.momentum) < 0.1) break;
+          }
+        }
+
+        if(iL != nL){
+          photonIndices.erase(photonIndices.begin() + iP);
+          --iP;
+          --nP;
+        }
+      }
+
+      if(photonIndices.size() > 0 && leptonIndices.size() > 0)
+        pass |= (1 << iT);
+    }
+
+    if(pass == 0) continue;
+
+    /* EVENT PASSES AT LEAST ONE FILTER - LOAD FULL EVENT */
+    fullInput.GetEntry(iEvent - 1);
+
+    /* CATEGORIZE EVENT */
+    for(unsigned iT(0); iT != nTreeTypes; ++iT){
+      if(((pass >> iT) & 1) == 0) continue;
+
+      std::vector<unsigned short>& leptonIndices(selectedLeptons[iT]);
+      std::vector<unsigned short>& photonIndices(selectedPhotons[iT]);
+
+      ++eventCounter[kPhotonSelection + iT];
+
+      *iPhoton = photonIndices;
+      *iLepton = leptonIndices;
+      outputs[iT]->Fill();
+    }
+  }
+
+  std::cout << "Cut flow: ";
+  for(unsigned i(0); i < nCountPoints; ++i)
+    std::cout << "[" << i << "]:" << eventCounter[i] << " ";
+  std::cout << std::endl;
+
+  /* FINALIZE OUTPUTS */
+  for(unsigned iT(0); iT != nTreeTypes; ++iT){
+    if(!outputEnabled[iT]) continue;
+
+    fullEvent->releaseTree(*outputs[iT]);
+
+    TFile* file(outputs[iT]->GetCurrentFile());
+    file->cd();
+    outputs[iT]->Write();
+    delete file;
+  }
+  delete iPhoton;
+  delete iLepton;
+
+  delete event;
+  delete fullEvent;
+}
+
+void
+filter_cms538test(TString const& _configFileName, TString const& _dataset, TObjArray* _fileName, TObjArray* _outputDir)
+{
+  TObjArray input;
+  input.SetOwner();
+
+  TString urlstr(_dataset);
+  urlstr += "/";
+  urlstr += _fileName->At(0)->GetName();
+
+  input.Add(new TObjString(urlstr));
+
+  TObjArray output;
+  output.SetOwner();
+
+  TString gridPoint(_fileName->At(0)->GetName());
+  gridPoint.ReplaceAll("tree_", "");
+  gridPoint.ReplaceAll("susyEvents_", "");
+
+  TString outstr(_outputDir->At(0)->GetName());
+  outstr += "/skim_" + gridPoint;
+
+  output.Add(new TObjString(outstr));
+
+  std::cout << "Running filter on " << gridPoint << std::endl;
+
+  filter_cms538test(_configFileName, &input, &output);
+}
