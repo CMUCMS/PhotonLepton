@@ -7,10 +7,10 @@
 
 #include "SusyEvent.h"
 
-#include "../Common/Utilities.h"
-#include "../Common/ObjectSelector.h"
-#include "../Common/ObjectTree.h"
-#include "../Common/SimpleEventProducer.h"
+#include "../CommonCode/Utilities.h"
+#include "../CommonCode/ObjectSelector.h"
+#include "../CommonCode/ObjectTree.h"
+#include "../CommonCode/SimpleEventProducer.h"
 
 #include <iostream>
 #include <sstream>
