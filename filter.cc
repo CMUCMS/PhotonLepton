@@ -4,6 +4,7 @@
 #include "TTree.h"
 #include "TPRegexp.h"
 #include "TObjArray.h"
+#include "TVector2.h"
 
 #include "SusyEvent.h"
 
@@ -39,26 +40,54 @@ filter(TString const& _configFileName, TObjArray* _urls, TObjArray* _outputName)
   using namespace susy;
 
   enum FilterTypes {
-    kPhotonAndElectron,
-    kPhotonAndMuon,
-    kDielectron,
-    kElectronAndMuon,
+    kPhotonAnd1ElectronOnZ,
+    kPhotonAnd1ElectronOffZ,
+    kPhotonAndElectronsOnZ,
+    kPhotonAndElectronsOffZ,
+    kElePhotonAndElectronOnZ,
+    kElePhotonAndElectronOffZ,
     kFakePhotonAndElectron,
-    kFakePhotonAndMuon,
     kPhotonAndFakeElectron,
+    kPhotonAnd1Muon,
+    kPhotonAndMuonsOnZ,
+    kPhotonAndMuonsOffZ,
+    kElePhotonAndMuon,
+    kFakePhotonAndMuon,
     kPhotonAndFakeMuon,
+    kElectronAndMuon,
+    kDiphoton,
+    kDiFakePhoton,
+    kDiElePhoton,
+    kPhotonAndElePhoton,
+    kSinglePhoton,
+    kSingleFakePhoton,
+    kSingleElePhoton,
     nFilterTypes
   };
 
   TString filterNames[nFilterTypes];
-  filterNames[kPhotonAndElectron] = "PhotonAndElectron";
-  filterNames[kPhotonAndMuon] = "PhotonAndMuon";
-  filterNames[kDielectron] = "Dielectron";
-  filterNames[kElectronAndMuon] = "ElectronAndMuon";
+  filterNames[kPhotonAnd1ElectronOnZ] = "PhotonAnd1ElectronOnZ";
+  filterNames[kPhotonAnd1ElectronOffZ] = "PhotonAnd1ElectronOffZ";
+  filterNames[kPhotonAndElectronsOnZ] = "PhotonAndElectronsOnZ";
+  filterNames[kPhotonAndElectronsOffZ] = "PhotonAndElectronsOffZ";
+  filterNames[kElePhotonAndElectronOnZ] = "ElePhotonAndElectronOnZ";
+  filterNames[kElePhotonAndElectronOffZ] = "ElePhotonAndElectronOffZ";
   filterNames[kFakePhotonAndElectron] = "FakePhotonAndElectron";
-  filterNames[kFakePhotonAndMuon] = "FakePhotonAndMuon";
   filterNames[kPhotonAndFakeElectron] = "PhotonAndFakeElectron";
+  filterNames[kPhotonAnd1Muon] = "PhotonAnd1Muon";
+  filterNames[kPhotonAndMuonsOnZ] = "PhotonAndMuonsOnZ";
+  filterNames[kPhotonAndMuonsOffZ] = "PhotonAndMuonsOffZ";
+  filterNames[kElePhotonAndMuon] = "ElePhotonAndMuon";
+  filterNames[kFakePhotonAndMuon] = "FakePhotonAndMuon";
   filterNames[kPhotonAndFakeMuon] = "PhotonAndFakeMuon";
+  filterNames[kElectronAndMuon] = "ElectronAndMuon";
+  filterNames[kDiphoton] = "Diphoton";
+  filterNames[kDiFakePhoton] = "DiFakePhoton";
+  filterNames[kDiElePhoton] = "DiElePhoton";
+  filterNames[kPhotonAndElePhoton] = "PhotonAndElePhoton";
+  filterNames[kSinglePhoton] = "SinglePhoton";
+  filterNames[kSingleFakePhoton] = "SingleFakePhoton";
+  filterNames[kSingleElePhoton] = "SingleElePhoton";
 
   /* SETUP FROM THE CONFIGURATION FILE */
 
@@ -169,6 +198,7 @@ filter(TString const& _configFileName, TObjArray* _urls, TObjArray* _outputName)
   input.SetBranchStatus("isRealData", 1);
   input.SetBranchStatus("metFilter*", 1);
   input.SetBranchStatus("hlt*", 1);
+  input.SetBranchStatus("pfParticles*", 1);
   ObjectTree::setBranchStatus(input, true, true, true, false, true); // Photon, Electron, Muon, Jet, Vertex
 
   Event* event(new Event);
@@ -187,9 +217,11 @@ filter(TString const& _configFileName, TObjArray* _urls, TObjArray* _outputName)
   fullInput.SetBranchStatus("eventNumber", 1);
   fullInput.SetBranchStatus("metFilter*", 1);
   fullInput.SetBranchStatus("hlt*", 1);
-  fullInput.SetBranchStatus("genParticles*", 1);
+  if(!event->isRealData) fullInput.SetBranchStatus("genParticles*", 1);
   fullInput.SetBranchStatus("pfParticles*", 1);
   fullInput.SetBranchStatus("met_pfType01CorrectedMet*", 1);
+  if(!event->isRealData) fullInput.SetBranchStatus("met_genMetTrue*", 1);
+  fullInput.SetBranchStatus("beamSpot*", 1);
   if(!event->isRealData) fullInput.SetBranchStatus("gridParams*", 1);
   susy::ObjectTree::setBranchStatus(fullInput);
 
@@ -281,10 +313,12 @@ filter(TString const& _configFileName, TObjArray* _urls, TObjArray* _outputName)
     kFakeElectron, //6
     kGoodMuon, //7
     kFakeMuon, //8
-    kGoodPhoton, //9
-    kFakePhoton, //10
-    kElePhoton, //11
-    kFinal, //12-(11+nFilterTypes)
+    kChargedHadronVeto, //9
+    kBremsVeto, //10
+    kGoodPhoton, //11
+    kFakePhoton, //12
+    kElePhoton, //13
+    kFinal, //14-(13+nFilterTypes)
     nCountPoints = kFinal + nFilterTypes
   };
 
@@ -330,9 +364,21 @@ filter(TString const& _configFileName, TObjArray* _urls, TObjArray* _outputName)
     goodJets.clear();
     goodVertices.clear();
 
-    if(countVertices(event->vertices, &goodVertices) == 0) continue;
+    unsigned nV(event->vertices.size());
+    for(unsigned iV(0); iV != nV; ++iV){
+      VertexVars vars(event->vertices[iV]);
+      if(vars.isGood)
+	goodVertices.push_back(iV);
+    }
+
+    if(goodVertices.size() == 0) continue;
 
     ++eventCounter[kGoodVertex];
+
+    std::vector<PFParticle const*> pfChargedHadrons;
+    for(unsigned iPF(0); iPF != event->pfParticles.size(); ++iPF)
+      if(std::abs(event->pfParticles[iPF].pdgId) == 211 && event->pfParticles[iPF].momentum.Pt() > 3.) pfChargedHadrons.push_back(&event->pfParticles[iPF]);
+    unsigned nPFCH(pfChargedHadrons.size());
 
     /* SELECT ELECTRONS */
 
@@ -371,6 +417,8 @@ filter(TString const& _configFileName, TObjArray* _urls, TObjArray* _outputName)
       // FIX FOR NAN-MOMENTUM PROBLEM
       if(el.momentum.X() != el.momentum.X()) continue;
 
+      if(el.momentum.Pt() < 5.) continue;
+
       ElectronVars vars(el, *event);
 
       if(vars.iSubdet == -1) continue;
@@ -384,7 +432,7 @@ filter(TString const& _configFileName, TObjArray* _urls, TObjArray* _outputName)
       if(isGood)
         goodElectrons.push_back(iEl);
       else if((elIdResults & elBaseline) == elBaseline &&
-              vars.deltaEta > minDeltaEta[vars.iSubdet] && vars.deltaPhi > minDeltaPhi[vars.iSubdet] &&
+              (vars.deltaEta > minDeltaEta[vars.iSubdet] || vars.deltaPhi > minDeltaPhi[vars.iSubdet]) &&
               vars.d0 < 0.2 && vars.dz < 1.)
         fakeElectrons.push_back(iEl);
     }
@@ -415,6 +463,8 @@ filter(TString const& _configFileName, TObjArray* _urls, TObjArray* _outputName)
     unsigned nMu(muons.size());
     for(unsigned iMu(0); iMu < nMu; ++iMu){
       Muon const& mu(muons[iMu]);
+
+      if(mu.momentum.Pt() < 5.) continue;
 
       MuonVars vars(mu, *event);
 
@@ -457,6 +507,9 @@ filter(TString const& _configFileName, TObjArray* _urls, TObjArray* _outputName)
     std::bitset<nPhotonCriteria> phNoVeto(ObjectSelector::phReferences[PhLoose12LV]);
     phNoVeto.reset(PhElectronVeto);
 
+    bool passCHVeto(false);
+    bool passBremsVeto(false);
+
     unsigned nPh(photons.size());
     for(unsigned iPh(0); iPh < nPh; ++iPh){
       Photon const& ph(photons[iPh]);
@@ -464,16 +517,27 @@ filter(TString const& _configFileName, TObjArray* _urls, TObjArray* _outputName)
       if(ph.momentum.Pt() < 25.) continue;
       if(std::abs(ph.caloPosition.Eta()) > etaGapBegin) continue;
 
-      /* veto bremming electrons */
+      /* veto photons matching a PF charged hadron */
+      /* observed in electron fakes; leads to significant PF Pt -> PF MET mismeasurement */
+      unsigned iPF(0);
+      for(; iPF != nPFCH; ++iPF)
+        if(std::abs(ph.momentum.Eta() - pfChargedHadrons[iPF]->momentum.Eta()) < 0.01 &&
+           std::abs(TVector2::Phi_mpi_pi(ph.momentum.Phi() - pfChargedHadrons[iPF]->momentum.Phi())) < 0.04)
+          break;
+      if(iPF != nPFCH) continue;
+
+      passCHVeto = true;
+
+      /* veto brems photons */
       /* must allow the ecalDriven electron that shares the superCluster - this will be vetoed in the electronVeto if missingHits <= 1 */
       /* superCluster matching will miss the trackerDriven electrons. */
       /* so if a trackerDriven electron of medium sans isolation quality is pointing at this photon, we will drop this, which should happen because such case will
          also pass the c-safe electron veto and lead to double counting. */
-      /* after this cut, any selected photon/fake candidates will have no >= medium\iso electrons within dR < 0.3 except for the one that shares the supercluster with the photon/fake */
+      /* after this cut, any selected photon/fake candidates will have no >= medium\iso electrons (tight\iso muons) within dR < 0.3 except for the one that shares the supercluster with the photon/fake */
       unsigned iL(0);
       for(; iL != nNoIsoElectrons; ++iL){
         if(electronsNoIso[iL]->superClusterIndex == ph.superClusterIndex) continue;
-        if(electronsNoIso[iL]->momentum.DeltaR(ph.momentum) < 0.3) break;
+        if(electronsNoIso[iL]->superCluster->position.DeltaR(ph.caloPosition) < 0.3) break;
       }
       if(iL != nNoIsoElectrons) continue;
 
@@ -481,6 +545,8 @@ filter(TString const& _configFileName, TObjArray* _urls, TObjArray* _outputName)
       for(; iL != nNoIsoMuons; ++iL)
         if(muonsNoIso[iL]->momentum.DeltaR(ph.momentum) < 0.3) break;
       if(iL != nNoIsoMuons) continue;
+
+      passBremsVeto = true;
 
       PhotonVars vars(ph, *event);
 
@@ -506,38 +572,91 @@ filter(TString const& _configFileName, TObjArray* _urls, TObjArray* _outputName)
     bool hasFakePhoton(nFakePhotons != 0);
     bool hasElePhoton(nElePhotons != 0);
 
+    if(passCHVeto) ++eventCounter[kChargedHadronVeto];
+    if(passBremsVeto) ++eventCounter[kBremsVeto];
+
     if(hasGoodPhoton) ++eventCounter[kGoodPhoton];
     if(hasFakePhoton) ++eventCounter[kFakePhoton];
     if(hasElePhoton) ++eventCounter[kElePhoton];
 
+    /* CALCULATE MASSES */
+    bool isPhotonAnd1Electron(hasGoodPhoton && photons[goodPhotons[0]].momentum.Pt() > 40. && nGoodElectrons == 1);
+    double mPhotonAnd1Electron(0.);
+    if(isPhotonAnd1Electron)
+      mPhotonAnd1Electron = (photons[goodPhotons[0]].momentum + electrons[goodElectrons[0]].momentum).M();
+
+    bool isPhotonAndElectrons(hasGoodPhoton && photons[goodPhotons[0]].momentum.Pt() > 40. && nGoodElectrons > 1);
+    double mPhotonAndElectrons(0.);
+    if(isPhotonAndElectrons)
+      mPhotonAndElectrons = (electrons[goodElectrons[0]].momentum + electrons[goodElectrons[1]].momentum).M();
+
+    bool isElePhotonAndElectron(hasElePhoton && hasGoodElectron);
+    double mElePhotonAndElectron(0.);
+    if(isElePhotonAndElectron){
+      for(unsigned iEP(0); iEP != nElePhotons && photons[elePhotons[iEP]].momentum.Pt() > 40.; ++iEP){
+        unsigned iGE(0);
+        for(; iGE != nGoodElectrons; ++iGE){
+          if(electrons[goodElectrons[iGE]].superClusterIndex != photons[elePhotons[iEP]].superClusterIndex){
+            mElePhotonAndElectron = (photons[elePhotons[iEP]].momentum + electrons[goodElectrons[iGE]].momentum).M();
+            break;
+          }
+        }
+        if(iGE != nGoodElectrons) break;
+      }
+      isElePhotonAndElectron = (mElePhotonAndElectron > 0.);
+    }
+
+    bool isPhotonAndMuons(hasGoodPhoton && nGoodMuons > 1);
+    double mPhotonAndMuons(0.);
+    if(isPhotonAndMuons)
+      mPhotonAndMuons = (muons[goodMuons[0]].momentum + muons[goodMuons[1]].momentum).M();
+
     /* DETERMINE RESULT OF EACH FILTER */
 
-    filterResults[kPhotonAndElectron] = hasGoodPhoton && hasGoodElectron && photons[goodPhotons[0]].momentum.Pt() > 40.;
-    filterResults[kPhotonAndMuon] = hasGoodPhoton && hasGoodMuon;
-    filterResults[kDielectron] = false;
-    if(hasElePhoton && hasGoodElectron && photons[elePhotons[0]].momentum.Pt() > 40.){
-      if(nElePhotons > 1 || nGoodElectrons > 1)
-        filterResults[kDielectron] = true;
-      else if(electrons[goodElectrons[0]].superClusterIndex != photons[elePhotons[0]].superClusterIndex)
-        filterResults[kDielectron] = true;
-    }
-    filterResults[kElectronAndMuon] = hasGoodElectron && hasGoodMuon; 
+    filterResults[kPhotonAnd1ElectronOnZ] = isPhotonAnd1Electron && mPhotonAnd1Electron > 80. && mPhotonAnd1Electron < 100.;
+    filterResults[kPhotonAnd1ElectronOffZ] = isPhotonAnd1Electron && (mPhotonAnd1Electron < 80. || mPhotonAnd1Electron > 100.);
+    filterResults[kPhotonAndElectronsOnZ] = isPhotonAndElectrons && mPhotonAndElectrons > 80. && mPhotonAndElectrons < 100.;
+    filterResults[kPhotonAndElectronsOffZ] = isPhotonAndElectrons && (mPhotonAndElectrons < 80. || mPhotonAndElectrons > 100.);
+    filterResults[kElePhotonAndElectronOnZ] = isElePhotonAndElectron && mElePhotonAndElectron > 80. && mElePhotonAndElectron < 100.;
+    filterResults[kElePhotonAndElectronOffZ] = isElePhotonAndElectron && (mElePhotonAndElectron < 80. || mElePhotonAndElectron > 100.);
     filterResults[kFakePhotonAndElectron] = false;
-    if(hasFakePhoton && hasGoodElectron && photons[fakePhotons[0]].momentum.Pt() > 40.){
-      if(nFakePhotons > 1 || nGoodElectrons > 1)
-        filterResults[kFakePhotonAndElectron] = true;
-      else if(electrons[goodElectrons[0]].superClusterIndex != photons[fakePhotons[0]].superClusterIndex)
-        filterResults[kFakePhotonAndElectron] = true;
+    if(hasFakePhoton && hasGoodElectron){
+      for(unsigned iFP(0); iFP != nFakePhotons && photons[fakePhotons[iFP]].momentum.Pt() > 40.; ++iFP){
+        unsigned iGE(0);
+        for(; iGE != nGoodElectrons; ++iGE)
+          if(electrons[goodElectrons[iGE]].superClusterIndex != photons[fakePhotons[iFP]].superClusterIndex) break;
+        if(iGE != nGoodElectrons){
+          filterResults[kFakePhotonAndElectron] = true;
+          break;
+        }          
+      }
     }
-    filterResults[kFakePhotonAndMuon] = hasFakePhoton && hasGoodMuon;
     filterResults[kPhotonAndFakeElectron] = false;
-    if(hasGoodPhoton && hasFakeElectron && photons[goodPhotons[0]].momentum.Pt() > 40.){
-      if(nGoodPhotons > 1 || nFakeElectrons > 1)
-        filterResults[kPhotonAndFakeElectron] = true;
-      else if(electrons[fakeElectrons[0]].superClusterIndex != photons[goodPhotons[0]].superClusterIndex)
-        filterResults[kPhotonAndFakeElectron] = true;
+    if(hasGoodPhoton && hasFakeElectron){
+      for(unsigned iGP(0); iGP != nGoodPhotons && photons[goodPhotons[iGP]].momentum.Pt() > 40.; ++iGP){
+        unsigned iFE(0);
+        for(; iFE != nFakeElectrons; ++iFE)
+          if(electrons[fakeElectrons[iFE]].superClusterIndex != photons[goodPhotons[iGP]].superClusterIndex) break;
+        if(iFE != nFakeElectrons){
+          filterResults[kPhotonAndFakeElectron] = true;
+          break;
+        }          
+      }
     }
+    filterResults[kPhotonAnd1Muon] = nGoodPhotons == 1 && nGoodMuons == 1;
+    filterResults[kPhotonAndMuonsOnZ] = isPhotonAndMuons && mPhotonAndMuons > 80. && mPhotonAndMuons < 100.;
+    filterResults[kPhotonAndMuonsOffZ] = isPhotonAndMuons && (mPhotonAndMuons < 80. || mPhotonAndMuons > 100.);
+    filterResults[kElePhotonAndMuon] = hasElePhoton && hasGoodMuon;
+    filterResults[kFakePhotonAndMuon] = hasFakePhoton && hasGoodMuon;
     filterResults[kPhotonAndFakeMuon] = hasGoodPhoton && hasFakeMuon;
+    filterResults[kElectronAndMuon] = hasGoodElectron && hasGoodMuon; 
+    filterResults[kDiphoton] = nGoodPhotons >= 2 && photons[goodPhotons[0]].momentum.Pt() > 40.;
+    filterResults[kDiFakePhoton] = nFakePhotons >= 2 && photons[fakePhotons[0]].momentum.Pt() > 40.;
+    filterResults[kDiElePhoton] = nElePhotons >= 2 && photons[elePhotons[0]].momentum.Pt() > 40.;
+    filterResults[kPhotonAndElePhoton] = hasGoodPhoton && hasElePhoton && (photons[goodPhotons[0]].momentum.Pt() > 40. || photons[elePhotons[0]].momentum.Pt() > 40.);
+    filterResults[kSinglePhoton] = hasGoodPhoton && photons[goodPhotons[0]].momentum.Pt() > 80.;
+    filterResults[kSingleFakePhoton] = hasFakePhoton && photons[fakePhotons[0]].momentum.Pt() > 80.;
+    filterResults[kSingleElePhoton] = hasElePhoton && photons[elePhotons[0]].momentum.Pt() > 80.;
 
     std::bitset<nFilterTypes> filterBits;
     for(unsigned iF(0); iF != nFilterTypes; ++iF){
@@ -651,3 +770,4 @@ filter(TString const& _configFileName, TString const& _dataset, TObjArray* _file
 
   filter(_configFileName, &input, &output);
 }
+
