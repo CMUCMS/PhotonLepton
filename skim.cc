@@ -5,8 +5,8 @@
 
 #include "SusyEvent.h"
 #include "SusyTriggerEvent.h"
-#include "../Common/Utilities.h"
-#include "../Common/ObjectTree.h"
+#include "../CommonCode/Utilities.h"
+#include "../CommonCode/ObjectTree.h"
 
 #include <iostream>
 #include <vector>
