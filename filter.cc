@@ -40,6 +40,8 @@ enum FilterTypes {
   kFakePhotonAndMuon,
   kPhotonAndFakeElectron,
   kPhotonAndFakeMuon,
+  kFakePhotonAndFakeElectron,
+  kFakePhotonAndFakeMuon,
   nFilterTypes
 };
 
@@ -51,7 +53,9 @@ TString filterNames[] = {
   "FakePhotonAndElectron",
   "FakePhotonAndMuon",
   "PhotonAndFakeElectron",
-  "PhotonAndFakeMuon"
+  "PhotonAndFakeMuon",
+  "FakePhotonAndFakeElectron",
+  "FakePhotonAndFakeMuon"
 };
 
 enum CountPoints {
@@ -137,7 +141,6 @@ private:
 
   bool applyHLTCut_;
   double radiationVetoThreshold_;
-  double photonPtThreshold_;
 };
 
 PhotonLeptonFilter::PhotonLeptonFilter() :
@@ -149,8 +152,7 @@ PhotonLeptonFilter::PhotonLeptonFilter() :
   useEvents_(),
   goodLumis_(),
   applyHLTCut_(true),
-  radiationVetoThreshold_(0.),
-  photonPtThreshold_(40.)
+  radiationVetoThreshold_(0.)
 {
 }
 
@@ -225,10 +227,8 @@ PhotonLeptonFilter::initialize(char const* _outputDir, char const* _configFileNa
 
   if(useEvents_.none()) useEvents_.set();
 
-  if(configRecords.find("HLTCUT") != configRecords.end() && configRecords["HLTCUT"] == "No"){
-    photonPtThreshold_ = 25.;
+  if(configRecords.find("HLTCUT") != configRecords.end() && configRecords["HLTCUT"] == "No")
     applyHLTCut_ = false;
-  }
 
   /* INITIALIZE OUTPUT */
 
@@ -425,13 +425,25 @@ PhotonLeptonFilter::run()
 
           if(particle.mother && std::abs(particle.mother->pdgId) > 99) continue; // is fragmentation
           
-          unsigned iI(0);
-          for(; iI != nG; ++iI){
+          // unsigned iI(0);
+          // for(; iI != nG; ++iI){
+          //   if(iI == iG) continue;
+          //   susy::Particle const& isoP(genParticles[iI]);
+          //   if(isoP.status == 1 && !(isoP.charge == 0 && std::abs(isoP.pdgId) < 20) && isoP.momentum.Pt() > 2. && isoP.momentum.DeltaR(particle.momentum) < 0.3) break;
+          // }
+          // if(iI != nG) continue; // is not isolated
+
+          double iso(0.);
+          for(unsigned iI(0); iI != nG; ++iI){
             if(iI == iG) continue;
             susy::Particle const& isoP(genParticles[iI]);
-            if(isoP.status == 1 && !(isoP.charge == 0 && std::abs(isoP.pdgId) < 20) && isoP.momentum.Pt() > 2. && isoP.momentum.DeltaR(particle.momentum) < 0.3) break;
+            unsigned isoId(std::abs(isoP.pdgId));
+            if(isoP.status == 1 && (isoId < 11 || isoId > 16) && isoP.momentum.Pt() > 2. && isoP.momentum.DeltaR(particle.momentum) < 0.3){
+              iso += isoP.momentum.Pt();
+              if(iso > 10.) break;
+            }
           }
-          if(iI != nG) continue; // is not isolated
+          if(iso > 10.) continue; // is not isolated
 
           if(radiationVetoThreshold_ < 0.){
             short idx(particle.motherIndex);
@@ -445,6 +457,7 @@ PhotonLeptonFilter::run()
         if(iG != nG) continue;
       }
 
+      if(eventCounter_[kRadiationVeto] < 10) std::cout << std::endl << iEntry - 1 << std::endl;
       ++eventCounter_[kRadiationVeto];
 
       std::vector<const susy::Electron*> electrons(eventProducer_.sortElectrons(event.electrons["gsfElectrons"]));
@@ -635,7 +648,7 @@ PhotonLeptonFilter::run()
 
         susy::Photon const& ph(*photons[iPh]);
 
-        if(ph.momentum.Pt() < photonPtThreshold_) continue;
+        if(ph.momentum.Pt() < 25.) continue;
         if(std::abs(ph.caloPosition.Eta()) > susy::etaGapBegin) continue;
 
         /* require photons to match a PF object, but veto if the match is to a CH */
