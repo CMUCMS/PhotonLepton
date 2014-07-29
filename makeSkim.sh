@@ -1,6 +1,6 @@
 #!/bin/bash
 
-spec=_type1
+spec=_cflow
 
 JOBS="$@"
 
@@ -99,87 +99,55 @@ get_arguments() {
             cfg="MC.cfg All.cfg"
             ;;
         WJetsToLNu)
-            if [ $spec = "nohlt" ]; then
-                sourcedir=/store/RA3Ntuples/SusyNtuples/cms538v1p2/Summer12_DR53X-PrivateSkim/WJetsToLNu_TuneZ2Star_8TeV-madgraph-tarball/PU_S10_START53_V7A-v2_PtW0To50_Photon25
-            else
-                sourcedir=/store/RA3Ntuples/SusyNtuples/cms538v1p2/Summer12_DR53X-PrivateSkim/WJetsToLNu_TuneZ2Star_8TeV-madgraph-tarball/PU_S10_START53_V7A-v2_PtW0To50_Photon25_HLT
-            fi
+            sourcedir=/store/RA3Ntuples/SusyNtuples/cms538v1p2/Summer12_DR53X-PrivateSkim/WJetsToLNu_TuneZ2Star_8TeV-madgraph-tarball/PU_S10_START53_V7A-v2_PtW0To50_Photon25
             cfg="MC.cfg FakePhoton.cfg"
-            vetoThreshold="20"
             ;;
         WJetsToLNu_PtW-50To70)
-            if [ $spec = "nohlt" ]; then
-                sourcedir=/store/RA3Ntuples/SusyNtuples/cms538v1p2/Summer12_DR53X-PrivateSkim/WJetsToLNu_PtW-50To70_TuneZ2star_8TeV-madgraph/PU_S10_START53_V7A-v1_Photon25
-            else
-                sourcedir=/store/RA3Ntuples/SusyNtuples/cms538v1p2/Summer12_DR53X-PrivateSkim/WJetsToLNu_PtW-50To70_TuneZ2star_8TeV-madgraph/PU_S10_START53_V7A-v1_Photon25_HLT
-            fi
+            sourcedir=/store/RA3Ntuples/SusyNtuples/cms538v1p2/Summer12_DR53X-PrivateSkim/WJetsToLNu_PtW-50To70_TuneZ2star_8TeV-madgraph/PU_S10_START53_V7A-v1_Photon25
             cfg="MC.cfg FakePhoton.cfg"
-            vetoThreshold="20"
             ;;
         WJetsToLNu_PtW-70To100)
-            if [ $spec = "nohlt" ]; then
-                sourcedir=/store/RA3Ntuples/SusyNtuples/cms538v1p2/Summer12_DR53X-PrivateSkim/WJetsToLNu_PtW-70To100_TuneZ2star_8TeV-madgraph/PU_S10_START53_V7A-v1_Photon25
-            else
-                sourcedir=/store/RA3Ntuples/SusyNtuples/cms538v1p2/Summer12_DR53X-PrivateSkim/WJetsToLNu_PtW-70To100_TuneZ2star_8TeV-madgraph/PU_S10_START53_V7A-v1_Photon25_HLT
-            fi
+            sourcedir=/store/RA3Ntuples/SusyNtuples/cms538v1p2/Summer12_DR53X-PrivateSkim/WJetsToLNu_PtW-70To100_TuneZ2star_8TeV-madgraph/PU_S10_START53_V7A-v1_Photon25
             cfg="MC.cfg FakePhoton.cfg"
-            vetoThreshold="20"
             ;;
         WJetsToLNu_PtW-100)
-            if [ $spec = "nohlt" ]; then
-                sourcedir=/store/RA3Ntuples/SusyNtuples/cms538v1p2/Summer12_DR53X-PrivateSkim/WJetsToLNu_PtW-100_TuneZ2star_8TeV-madgraph/PU_S10_START53_V7A-v1_Photon25
-            else
-                sourcedir=/store/RA3Ntuples/SusyNtuples/cms538v1p2/Summer12_DR53X-PrivateSkim/WJetsToLNu_PtW-100_TuneZ2star_8TeV-madgraph/PU_S10_START53_V7A-v1_Photon25_HLT
-            fi
+            sourcedir=/store/RA3Ntuples/SusyNtuples/cms538v1p2/Summer12_DR53X-PrivateSkim/WJetsToLNu_PtW-100_TuneZ2star_8TeV-madgraph/PU_S10_START53_V7A-v1_Photon25
             cfg="MC.cfg FakePhoton.cfg"
-            vetoThreshold="20"
             ;;
         DYJetsToLL)
             sourcedir=/store/RA3Ntuples/SusyNtuples/cms538v1p2/Summer12_DR53X/DYJetsToLL_M-50_TuneZ2Star_8TeV-madgraph-tarball/PU_S10_START53_V7A-v1
             cfg="MC.cfg EleFakePhoton.cfg"
-            vetoThreshold="20"
             ;;
         TTJetsSemiLept)
             sourcedir=/store/RA3Ntuples/SusyNtuples/cms538v1p2/Summer12_DR53X-PrivateSkim/TTJets_SemiLeptMGDecays_8TeV-madgraph-tauola/PU_S10_START53_V7C-v1_Photon25
             cfg="MC.cfg All.cfg"
-            vetoThreshold="-20"
-            ;;
-        TTJetsSemiLeptNoGamma)
-            sourcedir=/store/RA3Ntuples/SusyNtuples/cms538v1p2/Summer12_DR53X-PrivateSkim/TTJets_SemiLeptMGDecays_8TeV-madgraph-tauola/PU_S10_START53_V7C-v1_Photon25
-            cfg="MC.cfg EleFakePhoton.cfg"
-            vetoThreshold="20"
+            [ $spec != "nohlt" ] && vetoThreshold="-20"
             ;;
         TTJetsFullLept)
             sourcedir=/store/RA3Ntuples/SusyNtuples/cms538v1p2/Summer12_DR53X-PrivateSkim/TTJets_FullLeptMGDecays_8TeV-madgraph-tauola/PU_S10_START53_V7C-v2_Photon25
             cfg="MC.cfg All.cfg"
-            vetoThreshold="-20"
-            ;;
-        TTJetsFullLeptNoGamma)
-            sourcedir=/store/RA3Ntuples/SusyNtuples/cms538v1p2/Summer12_DR53X-PrivateSkim/TTJets_FullLeptMGDecays_8TeV-madgraph-tauola/PU_S10_START53_V7C-v2_Photon25
-            cfg="MC.cfg FakePhoton.cfg"
-            vetoThreshold="20"
+            [ $spec != "nohlt" ] && vetoThreshold="-20"
             ;;
         WW)
             sourcedir=/store/RA3Ntuples/SusyNtuples/cms538v1p2/Summer12_DR53X/WW_TuneZ2star_8TeV_pythia6_tauola/PU_S10_START53_V7A-v1
             cfg="MC.cfg All.cfg"
-            vetoThreshold="-20"
+            [ $spec != "nohlt" ] && vetoThreshold="-20"
             ;;
-        WWNoGamma)
-            sourcedir=/store/RA3Ntuples/SusyNtuples/cms538v1p2/Summer12_DR53X/WW_TuneZ2star_8TeV_pythia6_tauola/PU_S10_START53_V7A-v1
-            cfg="MC.cfg EleFakePhoton.cfg"
-            vetoThreshold="20"
+        WZ)
+            sourcedir=/store/RA3Ntuples/SusyNtuples/cms538v1p2/Summer12_DR53X/WZ_TuneZ2star_8TeV_pythia6_tauola/PU_S10_START53_V7A-v1
+            cfg="MC.cfg All.cfg"
             ;;
         WWJetsTo2L2Nu)
             sourcedir=/store/RA3Ntuples/SusyNtuples/cms538v1p2/Summer12_DR53X/WWJetsTo2L2Nu_TuneZ2star_8TeV-madgraph-tauola/PU_S10_START53_V7A-v1
             cfg="MC.cfg EleFakePhoton.cfg"
-            vetoThreshold="-20"
+            [ $spec != "nohlt" ] && vetoThreshold="-20"
             ;;
         WWGJets)
             sourcedir=/store/RA3Ntuples/SusyNtuples/cms538v1p2/Summer12_DR53X/WWGJets_8TeV-madgraph_v2/PU_S10_START53_V7A-v1
             cfg="MC.cfg All.cfg"
             ;;
         TTGJets)
-            sourcedir="/store/RA3Ntuples/SusyNtuples/cms538v1p2/Summer12_DR53X/TTGJets_8TeV-madgraph/PU_S10_START53_V7A-v1 /store/RA3Ntuples/SusyNtuples/cms538v1p2/Summer12_DR53X/TTGJets_8TeV-madgraph/PU_S10_START53_V19-v1"
+            sourcedir=/store/RA3Ntuples/SusyNtuples/cms538v1p2/Summer12_DR53X/TTGJets_8TeV-madgraph/PU_S10_START53_V19-v1
             cfg="MC.cfg All.cfg"
             ;;
         GJet_Pt-20to40)
@@ -202,20 +170,27 @@ get_arguments() {
             sourcedir=/store/RA3Ntuples/TestData/TChiwg_300
             cfg="MC.cfg EleFakePhoton.cfg"
             ;;
-	T5wg_400to550)
-	    sourcedir=/store/RA3Ntuples/SusyNtuples/cms538v1p2/Summer12_FS53/SMS-T5wg_2J_mGl-400to550_mLSP-25to525_TuneZ2star_8TeV-madgraph-tauola/START53_V19_FSIM_PU_S12-v1-sorted
-	    cfg="MC.cfg All.cfg"
-	    format='susyEvents_T5wg_{[0-9]+_[0-9]+}_*.root,susyTriggers_T5wg_{}_*.root'
-	    target='/T5wg'
-	    reducer='None'
-	    ;;
-	T5wg_600to750)
-	    sourcedir=/store/RA3Ntuples/SusyNtuples/cms538v1p2/Summer12_FS53/SMS-T5wg_2J_mGl-600to750_mLSP-25to725_TuneZ2star_8TeV-madgraph-tauola/START53_V19_FSIM_PU_S12-v1-sorted
-	    cfg="MC.cfg All.cfg"
-	    format='susyEvents_T5wg_{[0-9]+_[0-9]+}_*.root,susyTriggers_T5wg_{}_*.root'
-	    target='/T5wg'
-	    reducer='None'
-	    ;;
+    T5wg_400to550)
+        sourcedir=/store/RA3Ntuples/SusyNtuples/cms538v1p2/Summer12_FS53/SMS-T5wg_2J_mGl-400to550_mLSP-25to525_TuneZ2star_8TeV-madgraph-tauola/START53_V19_FSIM_PU_S12-v1-sorted
+        cfg="MC.cfg All.cfg"
+        format='susyEvents_T5wg_{[0-9]+_[0-9]+}_*.root,susyTriggers_T5wg_{}_*.root'
+        target='/T5wg'
+        reducer='None'
+        ;;
+    T5wg_600to750)
+        sourcedir=/store/RA3Ntuples/SusyNtuples/cms538v1p2/Summer12_FS53/SMS-T5wg_2J_mGl-600to750_mLSP-25to725_TuneZ2star_8TeV-madgraph-tauola/START53_V19_FSIM_PU_S12-v1-sorted
+        cfg="MC.cfg All.cfg"
+        format='susyEvents_T5wg_{[0-9]+_[0-9]+}_*.root,susyTriggers_T5wg_{}_*.root'
+        target='/T5wg'
+        reducer='None'
+        ;;
+        T5wg_800to950)
+            sourcedir=/store/RA3Ntuples/SusyNtuples/cms538v1p2/Summer12_FS53/SMS-T5wg_2J_mGl-800to950_mLSP-25to925_TuneZ2star_8TeV-madgraph-tauola/START53_V19_FSIM_PU_S12-v1-sorted
+        cfg="MC.cfg All.cfg"
+        format='susyEvents_T5wg_{[0-9]+_[0-9]+}_*.root,susyTriggers_T5wg_{}_*.root'
+        target='/T5wg'
+        reducer='None'
+            ;;
         T5wg_1000to1150)
             sourcedir=/store/RA3Ntuples/SusyNtuples/cms538v1p2/Summer12_FS53/SMS-T5wg_2J_mGl-1000to1150_mLSP-25to1125_TuneZ2star_8TeV-madgraph-tauola/START53_V19_FSIM_PU_S12-v1-sorted
             cfg="MC.cfg All.cfg"
@@ -228,6 +203,13 @@ get_arguments() {
             cfg="MC.cfg All.cfg"
             format='susyEvents_T5wg_{[0-9]+_[0-9]+}_*.root,susyTriggers_T5wg_{}_*.root'
             target='/T5wg'
+            reducer='None'
+            ;;
+        TChiwg)
+            sourcedir=/store/RA3Ntuples/SusyNtuples/cms538v1p2/Summer12_FS53/SMS-TChiwg_2J_mChargino-100to800_TuneZ2star_8TeV-madgraph-tauola/START53_V19_FSIM_PU_S12-v1-sorted
+            cfg="MC.cfg All.cfg"
+            format='susyEvents_TChiwg_{[0-9]+}_*.root,susyTriggers_TChiwg_{}_*.root'
+            target='/TChiwg'
             reducer='None'
             ;;
         *)
@@ -246,7 +228,6 @@ for JOB in $JOBS; do
     else
         TARGETDIR=/home/rootd/data/glskim${spec}${target}
     fi
-    rm -r $JOB > /dev/null 2>&1
 
     ssh ncmu40 "mkdir -p $TARGETDIR 2> /dev/null"
 
@@ -258,6 +239,6 @@ for JOB in $JOBS; do
         cfgstr=$cfgstr" $HOME/src/GammaL/PhotonLepton/cfg/$c"
     done
 
+    rm -r skims/$JOB > /dev/null 2>&1
     dap.py -w "skims/$JOB" -a "\"$cfgstr\", $vetoThreshold" -d "ncmu40:$TARGETDIR" -o $JOB.root -u $reducer -f $format -n $filesPerJob -S $sourcedir filter.cc:PhotonLeptonFilter || exit 1
 done
-
