@@ -1,6 +1,6 @@
 #!/bin/bash
 
-spec=_cflow
+spec=_liso
 
 JOBS="$@"
 
@@ -170,26 +170,26 @@ get_arguments() {
             sourcedir=/store/RA3Ntuples/TestData/TChiwg_300
             cfg="MC.cfg EleFakePhoton.cfg"
             ;;
-    T5wg_400to550)
-        sourcedir=/store/RA3Ntuples/SusyNtuples/cms538v1p2/Summer12_FS53/SMS-T5wg_2J_mGl-400to550_mLSP-25to525_TuneZ2star_8TeV-madgraph-tauola/START53_V19_FSIM_PU_S12-v1-sorted
-        cfg="MC.cfg All.cfg"
-        format='susyEvents_T5wg_{[0-9]+_[0-9]+}_*.root,susyTriggers_T5wg_{}_*.root'
-        target='/T5wg'
-        reducer='None'
-        ;;
-    T5wg_600to750)
-        sourcedir=/store/RA3Ntuples/SusyNtuples/cms538v1p2/Summer12_FS53/SMS-T5wg_2J_mGl-600to750_mLSP-25to725_TuneZ2star_8TeV-madgraph-tauola/START53_V19_FSIM_PU_S12-v1-sorted
-        cfg="MC.cfg All.cfg"
-        format='susyEvents_T5wg_{[0-9]+_[0-9]+}_*.root,susyTriggers_T5wg_{}_*.root'
-        target='/T5wg'
-        reducer='None'
-        ;;
+        T5wg_400to550)
+            sourcedir=/store/RA3Ntuples/SusyNtuples/cms538v1p2/Summer12_FS53/SMS-T5wg_2J_mGl-400to550_mLSP-25to525_TuneZ2star_8TeV-madgraph-tauola/START53_V19_FSIM_PU_S12-v1-sorted
+            cfg="MC.cfg All.cfg"
+            format='susyEvents_T5wg_{[0-9]+_[0-9]+}_*.root,susyTriggers_T5wg_{}_*.root'
+            target='/T5wg'
+            reducer='None'
+            ;;
+        T5wg_600to750)
+            sourcedir=/store/RA3Ntuples/SusyNtuples/cms538v1p2/Summer12_FS53/SMS-T5wg_2J_mGl-600to750_mLSP-25to725_TuneZ2star_8TeV-madgraph-tauola/START53_V19_FSIM_PU_S12-v1-sorted
+            cfg="MC.cfg All.cfg"
+            format='susyEvents_T5wg_{[0-9]+_[0-9]+}_*.root,susyTriggers_T5wg_{}_*.root'
+            target='/T5wg'
+            reducer='None'
+            ;;
         T5wg_800to950)
             sourcedir=/store/RA3Ntuples/SusyNtuples/cms538v1p2/Summer12_FS53/SMS-T5wg_2J_mGl-800to950_mLSP-25to925_TuneZ2star_8TeV-madgraph-tauola/START53_V19_FSIM_PU_S12-v1-sorted
-        cfg="MC.cfg All.cfg"
-        format='susyEvents_T5wg_{[0-9]+_[0-9]+}_*.root,susyTriggers_T5wg_{}_*.root'
-        target='/T5wg'
-        reducer='None'
+            cfg="MC.cfg All.cfg"
+            format='susyEvents_T5wg_{[0-9]+_[0-9]+}_*.root,susyTriggers_T5wg_{}_*.root'
+            target='/T5wg'
+            reducer='None'
             ;;
         T5wg_1000to1150)
             sourcedir=/store/RA3Ntuples/SusyNtuples/cms538v1p2/Summer12_FS53/SMS-T5wg_2J_mGl-1000to1150_mLSP-25to1125_TuneZ2star_8TeV-madgraph-tauola/START53_V19_FSIM_PU_S12-v1-sorted

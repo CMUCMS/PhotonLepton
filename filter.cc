@@ -2,7 +2,6 @@
 #include "TString.h"
 #include "TFile.h"
 #include "TTree.h"
-#include "TH1D.h"
 #include "TPRegexp.h"
 #include "TObjArray.h"
 #include "TVector2.h"
@@ -53,6 +52,7 @@ TString filterNames[nFilterTypes] = {
 };
 
 enum Cuts {
+  kAllEvents,
   kHLT,
   kGoodLumi,
   kMetFilter,
@@ -63,17 +63,6 @@ enum Cuts {
   nCuts
 };
 
-TString cuts[nCuts] = {
-  "HLT",
-  "GoodLumi",
-  "MetFilter",
-  "GoodVertex",
-  "RadiationVeto",
-  "GoodPhoton",
-  "GoodLepton"
-};
-
-
 class PhotonLeptonFilter : public SimpleTreeProducer {
 public:
   PhotonLeptonFilter();
@@ -83,6 +72,7 @@ public:
   bool run();
   void clearInput();
   bool finalize();
+  
 private:
   bool readConfig_(char const*, std::map<TString, TString>&);
 
@@ -91,8 +81,8 @@ private:
   TChain fullInput_;
   TChain fullTriggerInput_;
 
-  TH1D* cutflowE_;
-  TH1D* cutflowM_;
+  TTree* effTree_;
+  TTree* cutTree_;
   
   std::bitset<nFilterTypes> useEvents_;
 
@@ -109,6 +99,20 @@ private:
   bool mu_isFake_[susy::NMAX];
   bool jt_isCand_[susy::NMAX];
 
+  struct EffTreeVariables {
+    //mkbranch
+    char pdgId;
+    bool pass;
+    float pt;
+    float eta;
+    float phi;
+    float genPt;
+    float genIso;
+    unsigned char nVtx;
+    bool primVtx;
+    //mkbranch
+  } effVars_;
+
   double radiationVetoThreshold_;
 };
 
@@ -118,8 +122,8 @@ PhotonLeptonFilter::PhotonLeptonFilter() :
   triggerInput_("triggerEventTree"),
   fullInput_("susyTree"),
   fullTriggerInput_("triggerEventTree"),
-  cutflowE_(0),
-  cutflowM_(0),
+  effTree_(0),
+  cutTree_(0),
   goodLumis_(),
   radiationVetoThreshold_(0.)
 {
@@ -127,8 +131,8 @@ PhotonLeptonFilter::PhotonLeptonFilter() :
 
 PhotonLeptonFilter::~PhotonLeptonFilter()
 {
-  delete cutflowE_;
-  delete cutflowM_;
+  delete effTree_;
+  delete cutTree_;
 }
 
 bool
@@ -220,13 +224,25 @@ PhotonLeptonFilter::initialize(char const* _outputDir, char const* _configFileNa
 
   outputFile_->cd();
 
-  cutflowE_ = new TH1D("cutflowE", "Electron Channel Cut Flow", nCuts, -0.5, nCuts - 0.5);
-  cutflowM_ = new TH1D("cutflowM", "Muon Channel Cut Flow", nCuts, -0.5, nCuts - 0.5);
-
-  for(unsigned iC(0); iC != nCuts; ++iC){
-    cutflowE_->GetXaxis()->SetBinLabel(iC + 1, cuts[iC]);
-    cutflowM_->GetXaxis()->SetBinLabel(iC + 1, cuts[iC]);
+  if(configRecords["PUSCENARIO"] != ""){
+    effTree_ = new TTree("effTree", "Efficiency Tree");
+    effTree_->Branch("pdgId", &effVars_.pdgId, "pdgId/B");
+    effTree_->Branch("pass", &effVars_.pass, "pass/O");
+    effTree_->Branch("pt", &effVars_.pt, "pt/F");
+    effTree_->Branch("eta", &effVars_.eta, "eta/F");
+    effTree_->Branch("phi", &effVars_.phi, "phi/F");
+    effTree_->Branch("genPt", &effVars_.genPt, "genPt/F");
+    effTree_->Branch("genIso", &effVars_.genIso, "genIso/F");
+    effTree_->Branch("nVtx", &effVars_.nVtx, "nVtx/b");
+    effTree_->Branch("primVtx", &effVars_.primVtx, "primVtx/O");
   }
+
+  cutTree_ = new TTree("cutTree", "Cutflow");
+  cutTree_->Branch("run", 0, "run/i");
+  cutTree_->Branch("lumi", 0, "lumi/i");
+  cutTree_->Branch("event", 0, "event/i");
+  cutTree_->Branch("cutflowE", 0, "cutflowE/b");
+  cutTree_->Branch("cutflowM", 0, "cutflowM/b");
 
   for(std::map<TString, TString>::iterator cItr(configRecords.begin()); cItr != configRecords.end(); ++cItr){
     if(cItr->second != ""){
@@ -274,7 +290,7 @@ PhotonLeptonFilter::run()
   input_.SetBranchStatus("metFilter*", 1);
   input_.SetBranchStatus("hlt*", 1);
   input_.SetBranchStatus("pfParticles*", 1);
-  if(radiationVetoThreshold_ != 0. && input_.GetBranch("genParticles")) input_.SetBranchStatus("genParticles*", 1);
+  if(input_.GetBranch("genParticles")) input_.SetBranchStatus("genParticles*", 1);
   susy::ObjectTree::setBranchStatus(input_, true, true, true, false, true); // Photon, Electron, Muon, Jet, Vertex
   if(USEBEAMSPOTIP) input_.SetBranchStatus("beamSpot*", 1);
 
@@ -296,6 +312,16 @@ PhotonLeptonFilter::run()
     if(throw_) throw std::runtime_error("");
     else return false;
   }
+
+  /* SETUP CUTFLOW TREE */
+  
+  cutTree_->SetBranchAddress("run", &event.runNumber);
+  cutTree_->SetBranchAddress("lumi", &event.luminosityBlockNumber);
+  cutTree_->SetBranchAddress("event", &event.eventNumber);
+  unsigned char cutflowE;
+  unsigned char cutflowM;
+  cutTree_->SetBranchAddress("cutflowE", &cutflowE);
+  cutTree_->SetBranchAddress("cutflowM", &cutflowM);
 
   /* TRIGGERS */
 
@@ -338,18 +364,16 @@ PhotonLeptonFilter::run()
 
   /* START LOOP */
   
-  long iEntry(0);
   int nRead(0);
-  
-  while((nRead = event.getEntry(iEntry++)) != 0){
+  for(long iEntry(0); (nRead = event.getEntry(iEntry)) != 0; cutTree_->Fill(), ++iEntry){
     try{
       if(nRead < 0)
         throw susy::Exception(susy::Exception::kIOError, "Corrupt input");
     
       if(iEntry % 1000 == 0) std::cout << "Analyzing event " << iEntry << std::endl;
 
-      TH1D* cutflowE(cutflowE_);
-      TH1D* cutflowM(cutflowM_);
+      cutflowE = 0;
+      cutflowM = 0;
 
       std::bitset<nElectronHLT> passElectronHLT;
       std::bitset<nMuonHLT> passMuonHLT;
@@ -359,20 +383,18 @@ PhotonLeptonFilter::run()
       for(unsigned iHLT(0); iHLT != nMuonHLT; ++iHLT)
         if(event.hltMap.pass(muonHLT[iHLT] + "_v*")) passMuonHLT.set(iHLT);
 
-      if(passElectronHLT.any()) cutflowE->Fill(kHLT);
-      else cutflowE = 0;
-      if(passMuonHLT.any()) cutflowM->Fill(kHLT);
-      else cutflowM = 0;
+      if(passElectronHLT.any() && cutflowE == kHLT - 1) ++cutflowE;
+      if(passMuonHLT.any() && cutflowM == kHLT - 1) ++cutflowM;
 
       if(!goodLumis_.isGoodLumi(event.runNumber, event.luminosityBlockNumber)) continue;
 
-      if(cutflowE) cutflowE->Fill(kGoodLumi);
-      if(cutflowM) cutflowM->Fill(kGoodLumi);
+      if(cutflowE == kGoodLumi - 1) ++cutflowE;
+      if(cutflowM == kGoodLumi - 1) ++cutflowM;
 
       if(!event.passMetFilters()) continue;
 
-      if(cutflowE) cutflowE->Fill(kMetFilter);
-      if(cutflowM) cutflowM->Fill(kMetFilter);
+      if(cutflowE == kMetFilter - 1) ++cutflowE;
+      if(cutflowM == kMetFilter - 1) ++cutflowM;
 
       unsigned nV(event.vertices.size());
       unsigned iV(0);
@@ -382,8 +404,8 @@ PhotonLeptonFilter::run()
       }
       if(iV == nV) continue;
 
-      if(cutflowE) cutflowE->Fill(kGoodVertex);
-      if(cutflowM) cutflowM->Fill(kGoodVertex);
+      if(cutflowE == kGoodVertex - 1) ++cutflowE;
+      if(cutflowM == kGoodVertex - 1) ++cutflowM;
 
       if(radiationVetoThreshold_ != 0.){
         double ptThreshold(std::abs(radiationVetoThreshold_));
@@ -402,11 +424,12 @@ PhotonLeptonFilter::run()
           for(unsigned iI(0); iI != nG; ++iI){
             if(iI == iG) continue;
             susy::Particle const& isoP(genParticles[iI]);
+            if(isoP.status != 1) continue;
             unsigned isoId(std::abs(isoP.pdgId));
-            if(isoP.status == 1 && (isoId < 11 || isoId > 16) && isoP.momentum.Pt() > 2. && isoP.momentum.DeltaR(particle.momentum) < 0.3){
-              iso += isoP.momentum.Pt();
-              if(iso > 10.) break;
-            }
+            if(isoId == 12 || isoId == 14 || isoId == 16 || isoId == 1000022 || isoId == 1000039) continue;
+            if(isoP.momentum.DeltaR(particle.momentum) > 0.3) continue;
+            iso += isoP.momentum.Pt();
+            if(iso > 10.) break;
           }
           if(iso > 10.) continue; // is not isolated
 
@@ -420,22 +443,96 @@ PhotonLeptonFilter::run()
         }
 
         if(iG != nG) continue;
+      }
+      if(cutflowE == kRadiationVeto - 1) ++cutflowE;
+      if(cutflowM == kRadiationVeto - 1) ++cutflowM;
 
-        if(cutflowE) cutflowE->Fill(kRadiationVeto);
-        if(cutflowM) cutflowM->Fill(kRadiationVeto);
+      std::vector<std::pair<susy::Particle const*, float> > genPhotons;
+      std::vector<std::pair<susy::Particle const*, float> > genElectrons;
+      std::vector<std::pair<susy::Particle const*, float> > genMuons;
+      std::vector<susy::Photon const*> genMatchedPhotons;
+      std::vector<susy::Electron const*> genMatchedElectrons;
+      std::vector<susy::Muon const*> genMatchedMuons;
+
+      if(effTree_){
+        susy::ParticleCollection const& genParticles(event.genParticles);
+        unsigned nG(genParticles.size());
+
+        TVector3 const* genVertex(0);
+        for(unsigned iG(0); iG != nG; ++iG){
+          if(genParticles[iG].mother){
+            genVertex = &genParticles[iG].vertex;
+            break;
+          }
+        }
+
+        double dZPrim(0.);
+        effVars_.nVtx = 0;
+        effVars_.primVtx = true;
+        for(iV = 0; iV != nV; ++iV){
+          susy::VertexVars vars(event.vertices[iV]);
+          if(!vars.isGood) continue;
+          double dZ(std::abs(vars.z - genVertex->Z()));
+          if(effVars_.nVtx == 0) dZPrim = dZ;
+          else if(dZ < dZPrim) effVars_.primVtx = false;
+          ++effVars_.nVtx;
+        }
+
+        for(unsigned iG(0); iG != nG; ++iG){
+          susy::Particle const& part(genParticles[iG]);
+          if(part.status != 1 || !part.mother || std::abs(part.mother->pdgId) > 99) continue;
+          if(part.momentum.Pt() < 20.) continue;
+          unsigned absId(std::abs(part.pdgId));
+          if(absId != 22 && absId != 11 && absId != 13) continue;
+          if(absId == 11 || absId == 13){
+            susy::Particle const* mother(part.mother);
+            while(mother && mother->pdgId != 23 && std::abs(mother->pdgId) != 24) mother = mother->mother;
+            if(!mother) continue;
+          }
+
+          double iso(0.);
+          for(unsigned iI(0); iI != nG; ++iI){
+            if(iI == iG) continue;
+            susy::Particle const& isoP(genParticles[iI]);
+            if(isoP.status != 1) continue;
+            unsigned isoId(std::abs(isoP.pdgId));
+            if(isoId == 12 || isoId == 14 || isoId == 16 || isoId == 1000022 || isoId == 1000039) continue;
+            if(isoP.momentum.DeltaR(part.momentum) > 0.3) continue;
+            iso += isoP.momentum.Pt();
+          }
+
+          switch(absId){
+          case 22:
+            genPhotons.push_back(std::make_pair(&part, iso));
+            genMatchedPhotons.push_back(0);
+            break;
+          case 11:
+            genElectrons.push_back(std::make_pair(&part, iso));
+            genMatchedElectrons.push_back(0);
+            break;
+          case 13:
+            genMuons.push_back(std::make_pair(&part, iso));
+            genMatchedMuons.push_back(0);
+            break;
+          }
+        }
       }
 
       // bug fix for tag cms533v0 / cms538v1
       std::vector<susy::PFParticle const*> pfParticles(susy::cleanPFParticles(event.pfParticles));
       unsigned nPF(pfParticles.size());
 
-      /* SELECT PHOTONS */
+      /* SORT OBJECTS (ELECTRON SIZE WILL CHANGE) */
 
       std::vector<const susy::Photon*> photons(eventProducer_.sortPhotons(event.photons["photons"]));
-      unsigned nPh(photons.size());
-
       std::vector<const susy::Electron*> electrons(eventProducer_.sortElectrons(event.electrons["gsfElectrons"]));
+      std::vector<const susy::Muon*> muons(eventProducer_.sortMuons(event.muons["muons"]));
+
+      unsigned nPh(photons.size());
       unsigned nEl(electrons.size());
+      unsigned nMu(muons.size());
+
+      /* SELECT PHOTONS */
 
       unsigned nCandPhoton(0);
       unsigned nFakePhoton(0);
@@ -444,6 +541,8 @@ PhotonLeptonFilter::run()
       std::fill_n(ph_isCand_, susy::NMAX, false);
       std::fill_n(ph_isFake_, susy::NMAX, false);
       std::fill_n(ph_isEle_, susy::NMAX, false);
+
+      int leadGoodPhoton(-1);
 
       for(unsigned iPh(0); iPh != nPh; ++iPh){
         susy::Photon const& ph(*photons[iPh]);
@@ -463,125 +562,134 @@ PhotonLeptonFilter::run()
         if(iPF != nPF) continue;
 
         unsigned iL(0);
-        for(; iL != nEl; ++iL){
-          if(electrons[iL]->momentum.Pt() < 2.) continue;
-          if(electrons[iL]->superClusterIndex == ph.superClusterIndex ||
-             electrons[iL]->superCluster->position.DeltaR(ph.caloPosition) < 0.02) break;
+        for(; iL != nMu; ++iL){
+          if(muons[iL]->momentum.Pt() < 2.){
+            iL = nMu;
+            break;
+          }
+          if(muons[iL]->momentum.DeltaR(ph.momentum) < 0.3) break;
         }
-        bool gsfVeto(iL == nEl);
+        if(iL != nMu) continue;
+
+        bool gsfVeto(true);
+        for(iL = 0; iL != nEl; ++iL){
+          if(electrons[iL]->momentum.Pt() < 2.){
+            iL = nEl;
+            break;
+          }
+          if(electrons[iL]->superClusterIndex == ph.superClusterIndex){
+            gsfVeto = false;
+            continue;
+          }
+          double dR(electrons[iL]->superCluster->position.DeltaR(ph.caloPosition));
+          if(dR < 0.02) gsfVeto = false;
+          else if(dR < 0.3) break;
+        }
+        if(iL != nEl) continue;
 
         susy::PhotonVars vars(ph, event);
         bool isGood(susy::ObjectSelector::isGoodPhoton(vars, susy::PhLoose12Pix, &phIdResults) && gsfVeto); // order matters! isGoodPhoton must execute
 
         if(isGood){
+          if(leadGoodPhoton < 0) leadGoodPhoton = iPh;
+          
           ph_isCand_[iPh] = true;
-	  ++nCandPhoton;
-	}
+          ++nCandPhoton;
+
+          if(effTree_){
+            for(unsigned iG(0); iG != genPhotons.size(); ++iG){
+              susy::Particle const& genPhoton(*genPhotons[iG].first);
+              if(genPhoton.momentum.Vect().DeltaR(ph.caloPosition - genPhoton.vertex) < 0.1)
+                genMatchedPhotons[iG] = &ph;
+            }
+          }
+        }
         else if((phIdResults & phNoVeto) == phNoVeto){
           ph_isEle_[iPh] = true;
-	  ++nElePhoton;
-	}
+          ++nElePhoton;
+        }
         else if(gsfVeto && phIdResults[susy::PhElectronVeto]){
           ph_isFake_[iPh] = true;
-	  ++nFakePhoton;
-	}
+          ++nFakePhoton;
+        }
       }
 
       if(nCandPhoton == 0 && nElePhoton == 0 && nFakePhoton == 0) continue;
 
-      if(nCandPhoton == 0){
-        cutflowE = 0;
-        cutflowM = 0;
-      }
-
-      if(cutflowE || cutflowM){
-        unsigned iPh(0);
-        for(; iPh != nPh; ++iPh){
-          if(ph_isCand_[iPh]){
-            if(photons[iPh]->momentum.Pt() < 40.) iPh = nPh;
-            break;
-          }
-        }
-        if(iPh == nPh){
-          cutflowE = 0;
-          cutflowM = 0;
-        }
-      }
-
-      if(cutflowE){
-        std::vector<susy::TriggerObjectCollection> photonHLTObjects[nElectronHLT];
-        for(unsigned iHLT(0); iHLT != nElectronHLT; ++iHLT){
-          if(!passElectronHLT[iHLT]) continue; // to save time
-          for(unsigned iF(0); iF != photonHLTFiltersE[iHLT].size(); ++iF)
-            photonHLTObjects[iHLT].push_back(triggerEvent.getFilterObjects(photonHLTFiltersE[iHLT][iF]));
-        }
-
-        unsigned iPh(0);
-        for(; iPh != nPh; ++iPh){
-          if(!ph_isCand_[iPh]) continue;
-          if(photons[iPh]->momentum.Pt() < 40.){
-            iPh = nPh;
-            break;
+      if(leadGoodPhoton >= 0 && photons[leadGoodPhoton]->momentum.Pt() > 40.){
+        if(cutflowE == kGoodPhoton - 1){
+          std::vector<susy::TriggerObjectCollection> photonHLTObjects[nElectronHLT];
+          for(unsigned iHLT(0); iHLT != nElectronHLT; ++iHLT){
+            if(!passElectronHLT[iHLT]) continue; // to save time
+            for(unsigned iF(0); iF != photonHLTFiltersE[iHLT].size(); ++iF)
+              photonHLTObjects[iHLT].push_back(triggerEvent.getFilterObjects(photonHLTFiltersE[iHLT][iF]));
           }
 
-          TLorentzVector dSC(photons[iPh]->superCluster->position, 0.);
-
-          unsigned iHLT(0);
-          for(; iHLT != nElectronHLT; ++iHLT){
-            if(!passElectronHLT[iHLT]) continue;
-            unsigned iF(0);
-            for(; iF != photonHLTFiltersE[iHLT].size(); ++iF){
-              susy::TriggerObjectCollection& objects(photonHLTObjects[iHLT][iF]);
-              unsigned iO(0);
-              for(; iO != objects.size(); ++iO)
-                if(objects[iO].deltaR(dSC) < 0.15) break; // object matched
-              if(iO == objects.size()) break; // no matching object for the filter
+          unsigned iPh(0);
+          for(; iPh != nPh; ++iPh){
+            if(!ph_isCand_[iPh]) continue;
+            if(photons[iPh]->momentum.Pt() < 40.){
+              iPh = nPh;
+              break;
             }
-            if(iF == photonHLTFiltersE[iHLT].size()) break; // all filters of the path matched
-          }
-          if(iHLT != nElectronHLT) break; // at least one path had its objects matching
-        }
 
-        if(iPh != nPh) cutflowE->Fill(kGoodPhoton);
-        else cutflowE = 0;
-      }
+            TLorentzVector dSC(photons[iPh]->superCluster->position, 0.);
 
-      if(cutflowM){
-        std::vector<susy::TriggerObjectCollection> photonHLTObjects[nMuonHLT];
-        for(unsigned iHLT(0); iHLT != nMuonHLT; ++iHLT){
-          if(!passMuonHLT[iHLT]) continue; // to save time
-          for(unsigned iF(0); iF != photonHLTFiltersM[iHLT].size(); ++iF)
-            photonHLTObjects[iHLT].push_back(triggerEvent.getFilterObjects(photonHLTFiltersM[iHLT][iF]));
-        }
-
-        unsigned iPh(0);
-        for(; iPh != nPh; ++iPh){
-          if(!ph_isCand_[iPh]) continue;
-          if(photons[iPh]->momentum.Pt() < 40.){
-            iPh = nPh;
-            break;
-          }
-
-          TLorentzVector dSC(photons[iPh]->superCluster->position, 0.);
-
-          unsigned iHLT(0);
-          for(; iHLT != nMuonHLT; ++iHLT){
-            if(!passMuonHLT[iHLT]) continue;
-            unsigned iF(0);
-            for(; iF != photonHLTFiltersM[iHLT].size(); ++iF){
-              susy::TriggerObjectCollection& objects(photonHLTObjects[iHLT][iF]);
-              unsigned iO(0);
-              for(; iO != objects.size(); ++iO)
-                if(objects[iO].deltaR(dSC) < 0.15) break; // object matched
-              if(iO == objects.size()) break; // no matching object for the filter
+            unsigned iHLT(0);
+            for(; iHLT != nElectronHLT; ++iHLT){
+              if(!passElectronHLT[iHLT]) continue;
+              unsigned iF(0);
+              for(; iF != photonHLTFiltersE[iHLT].size(); ++iF){
+                susy::TriggerObjectCollection& objects(photonHLTObjects[iHLT][iF]);
+                unsigned iO(0);
+                for(; iO != objects.size(); ++iO)
+                  if(objects[iO].deltaR(dSC) < 0.15) break; // object matched
+                if(iO == objects.size()) break; // no matching object for the filter
+              }
+              if(iF == photonHLTFiltersE[iHLT].size()) break; // all filters of the path matched
             }
-            if(iF == photonHLTFiltersM[iHLT].size()) break; // all filters of the path matched
+            if(iHLT != nElectronHLT) break; // at least one path had its objects matching
           }
-          if(iHLT != nMuonHLT) break; // at least one path had its objects matching
+
+          if(iPh != nPh) ++cutflowE;
         }
 
-        if(iPh != nPh) cutflowM->Fill(kGoodPhoton);
-        else cutflowM = 0;
+        if(cutflowM == kGoodPhoton - 1){
+          std::vector<susy::TriggerObjectCollection> photonHLTObjects[nMuonHLT];
+          for(unsigned iHLT(0); iHLT != nMuonHLT; ++iHLT){
+            if(!passMuonHLT[iHLT]) continue; // to save time
+            for(unsigned iF(0); iF != photonHLTFiltersM[iHLT].size(); ++iF)
+              photonHLTObjects[iHLT].push_back(triggerEvent.getFilterObjects(photonHLTFiltersM[iHLT][iF]));
+          }
+
+          unsigned iPh(0);
+          for(; iPh != nPh; ++iPh){
+            if(!ph_isCand_[iPh]) continue;
+            if(photons[iPh]->momentum.Pt() < 40.){
+              iPh = nPh;
+              break;
+            }
+
+            TLorentzVector dSC(photons[iPh]->superCluster->position, 0.);
+
+            unsigned iHLT(0);
+            for(; iHLT != nMuonHLT; ++iHLT){
+              if(!passMuonHLT[iHLT]) continue;
+              unsigned iF(0);
+              for(; iF != photonHLTFiltersM[iHLT].size(); ++iF){
+                susy::TriggerObjectCollection& objects(photonHLTObjects[iHLT][iF]);
+                unsigned iO(0);
+                for(; iO != objects.size(); ++iO)
+                  if(objects[iO].deltaR(dSC) < 0.15) break; // object matched
+                if(iO == objects.size()) break; // no matching object for the filter
+              }
+              if(iF == photonHLTFiltersM[iHLT].size()) break; // all filters of the path matched
+            }
+            if(iHLT != nMuonHLT) break; // at least one path had its objects matching
+          }
+
+          if(iPh != nPh) ++cutflowM;
+        }
       }
 
       /* SELECT ELECTRONS */
@@ -601,26 +709,34 @@ PhotonLeptonFilter::run()
 
         if(vars.iSubdet == -1) continue;
 
-	bool isMedium(false);
-	if(USEBEAMSPOTIP){
-	  susy::ObjectSelector::isGoodElectron(vars, susy::ElMedium12, &elIdResults);
-	  if((elIdResults & elNoIP) == elNoIP)
-	    isMedium = std::abs(el.gsfTrack->dxy(event.beamSpot)) < 0.2;
-	}
-	else
-	  isMedium = vars.isMedium;
+        bool isMedium(false);
+        if(USEBEAMSPOTIP){
+          susy::ObjectSelector::isGoodElectron(vars, susy::ElMedium12, &elIdResults);
+          if((elIdResults & elNoIP) == elNoIP)
+            isMedium = std::abs(el.gsfTrack->dxy(event.beamSpot)) < 0.2;
+        }
+        else
+          isMedium = vars.isMedium;
 
         if(isMedium){
           el_isCand_[iEl] = true;
-	  ++nCandElectron;
-	}
+          ++nCandElectron;
+
+          if(effTree_){
+            for(unsigned iG(0); iG != genElectrons.size(); ++iG){
+              susy::Particle const& genElectron(*genElectrons[iG].first);
+              if(genElectron.momentum.DeltaR(el.momentum) < 0.05)
+                genMatchedElectrons[iG] = &el;
+            }
+          }
+        }
         else{
           el_isFake_[iEl] = true;
-	  ++nFakeElectron;
-	}
+          ++nFakeElectron;
+        }
       }
 
-      if(nCandElectron != 0 && cutflowE){
+      if(nCandElectron != 0 && cutflowE == kGoodLepton - 1){
         std::vector<susy::TriggerObjectCollection> electronHLTObjects[nElectronHLT];
         for(unsigned iHLT(0); iHLT != nElectronHLT; ++iHLT){
           if(!passElectronHLT[iHLT]) continue; // to save time
@@ -653,13 +769,10 @@ PhotonLeptonFilter::run()
           if(iHLT != nElectronHLT) break; // at least one path had its objects matching
         }
 
-        if(iEl != nEl) cutflowE->Fill(kGoodLepton);
+        if(iEl != nEl) ++cutflowE;
       }
 
       /* SELECT MUONS */
-
-      std::vector<const susy::Muon*> muons(eventProducer_.sortMuons(event.muons["muons"]));
-      unsigned nMu(muons.size());
 
       unsigned nCandMuon(0);
       unsigned nFakeMuon(0);
@@ -676,30 +789,38 @@ PhotonLeptonFilter::run()
 
         if(vars.iSubdet == -1 || !vars.isLoose) continue;
 
-	bool isTight(false);
-	if(USEBEAMSPOTIP){
-	  susy::ObjectSelector::isGoodMuon(vars, susy::MuTight12, &muIdResults);
-	  if((muIdResults & muNoIP) == muNoIP){
-	    susy::Track const* track(vars.pt > 200. ? mu.highPtBestTrack : mu.bestTrack);
-	    if(!track) track = mu.innerTrack;
-	    if(track)
-	      isTight = std::abs(track->dxy(event.beamSpot)) < 0.2;
-	  }
-	}
-	else
-	  isTight = vars.isTight;
+        bool isTight(false);
+        if(USEBEAMSPOTIP){
+          susy::ObjectSelector::isGoodMuon(vars, susy::MuTight12, &muIdResults);
+          if((muIdResults & muNoIP) == muNoIP){
+            susy::Track const* track(vars.pt > 200. ? mu.highPtBestTrack : mu.bestTrack);
+            if(!track) track = mu.innerTrack;
+            if(track)
+              isTight = std::abs(track->dxy(event.beamSpot)) < 0.2;
+          }
+        }
+        else
+          isTight = vars.isTight;
 
         if(isTight){
           mu_isCand_[iMu] = true;
-	  ++nCandMuon;
-	}
+          ++nCandMuon;
+
+          if(effTree_){
+            for(unsigned iG(0); iG != genMuons.size(); ++iG){
+              susy::Particle const& genMuon(*genMuons[iG].first);
+              if(genMuon.momentum.DeltaR(mu.momentum) < 0.05)
+                genMatchedMuons[iG] = &mu;
+            }
+          }
+        }
         else{
           mu_isFake_[iMu] = true;
-	  ++nFakeMuon;
-	}
+          ++nFakeMuon;
+        }
       }
 
-      if(nCandMuon != 0 && cutflowM){
+      if(nCandMuon != 0 && cutflowM == kGoodLepton - 1){
         std::vector<susy::TriggerObjectCollection> muonHLTObjects[nMuonHLT];
         for(unsigned iHLT(0); iHLT != nMuonHLT; ++iHLT){
           if(!passMuonHLT[iHLT]) continue; // to save time
@@ -731,7 +852,7 @@ PhotonLeptonFilter::run()
           if(iHLT != nMuonHLT) break; // at least one path had its objects matching
         }
 
-        if(iMu != nMu) cutflowM->Fill(kGoodLepton);
+        if(iMu != nMu) ++cutflowM;
       }
 
       /* DETERMINE THE RESULT OF EACH FILTER */
@@ -746,16 +867,16 @@ PhotonLeptonFilter::run()
       filterResults_[kPhotonAndFakeMuon] = nCandPhoton != 0 && nFakeMuon != 0;
 
       if(nElePhoton == 1 && nCandElectron == 1){
-	// is the only elePhoton actually the candidate electron?
-	unsigned iElePh(0);
-	for(; iElePh != nPh; ++iElePh)
-	  if(ph_isEle_[iElePh]) break;
-	unsigned iCandEl(0);
-	for(; iCandEl != nEl; ++iCandEl)
-	  if(el_isCand_[iCandEl]) break;
-	if(electrons[iCandEl]->superClusterIndex == photons[iElePh]->superClusterIndex ||
-	   electrons[iCandEl]->superCluster->position.DeltaR(photons[iElePh]->caloPosition) < 0.02)
-	  filterResults_[kElePhotonAndElectron] = false;
+        // is the only elePhoton actually the candidate electron?
+        unsigned iElePh(0);
+        for(; iElePh != nPh; ++iElePh)
+          if(ph_isEle_[iElePh]) break;
+        unsigned iCandEl(0);
+        for(; iCandEl != nEl; ++iCandEl)
+          if(el_isCand_[iCandEl]) break;
+        if(electrons[iCandEl]->superClusterIndex == photons[iElePh]->superClusterIndex ||
+           electrons[iCandEl]->superCluster->position.DeltaR(photons[iElePh]->caloPosition) < 0.02)
+          filterResults_[kElePhotonAndElectron] = false;
       }
 
       unsigned iF(0);
@@ -766,7 +887,7 @@ PhotonLeptonFilter::run()
 
       /* EVENT PASSES AT LEAST ONE FILTER - LOAD FULL EVENT AND FILL OUTPUT */
 
-      fullEvent.getEntry(iEntry - 1);
+      fullEvent.getEntry(iEntry);
 
       std::vector<const susy::PFJet*> jets(eventProducer_.sortJets(fullEvent.pfJets["ak5"]));
       unsigned nJ(jets.size());
@@ -797,6 +918,71 @@ PhotonLeptonFilter::run()
         if(iC != nPh) continue;
 
         jt_isCand_[iJ] = true;
+      }
+
+      if(effTree_){
+        for(unsigned iG(0); iG != genPhotons.size(); ++iG){
+          effVars_.pdgId = 22;
+          effVars_.genPt = genPhotons[iG].first->momentum.Pt();
+          effVars_.genIso = genPhotons[iG].second;
+          susy::Photon const* reco(genMatchedPhotons[iG]);
+          if(reco){
+            effVars_.pass = true;
+            effVars_.pt = reco->momentum.Pt();
+            effVars_.eta = reco->caloPosition.Eta();
+            effVars_.phi = reco->caloPosition.Phi();
+          }
+          else{
+            effVars_.pass = false;
+            effVars_.pt = 0.;
+            effVars_.eta = 0.;
+            effVars_.phi = 0.;
+          }
+          
+          effTree_->Fill();
+        }
+
+        for(unsigned iG(0); iG != genElectrons.size(); ++iG){
+          effVars_.pdgId = genElectrons[iG].first->pdgId;
+          effVars_.genPt = genElectrons[iG].first->momentum.Pt();
+          effVars_.genIso = genElectrons[iG].second;
+          susy::Electron const* reco(genMatchedElectrons[iG]);
+          if(reco){
+            effVars_.pass = true;
+            effVars_.pt = reco->momentum.Pt();
+            effVars_.eta = reco->superCluster->position.Eta();
+            effVars_.phi = reco->superCluster->position.Phi();
+          }
+          else{
+            effVars_.pass = false;
+            effVars_.pt = 0.;
+            effVars_.eta = 0.;
+            effVars_.phi = 0.;
+          }
+
+          effTree_->Fill();
+        }
+
+        for(unsigned iG(0); iG != genMuons.size(); ++iG){
+          effVars_.pdgId = genMuons[iG].first->pdgId;
+          effVars_.genPt = genMuons[iG].first->momentum.Pt();
+          effVars_.genIso = genMuons[iG].second;
+          susy::Muon const* reco(genMatchedMuons[iG]);
+          if(reco){
+            effVars_.pass = true;
+            effVars_.pt = reco->momentum.Pt();
+            effVars_.eta = reco->momentum.Eta();
+            effVars_.phi = reco->momentum.Phi();
+          }
+          else{
+            effVars_.pass = false;
+            effVars_.pt = 0.;
+            effVars_.eta = 0.;
+            effVars_.phi = 0.;
+          }
+
+          effTree_->Fill();
+        }
       }
 
       eventProducer_.extractTriggerObjects(fullTriggerEvent);
@@ -832,16 +1018,16 @@ PhotonLeptonFilter::finalize()
   outputFile_->cd();
   evtTree_->Write();
   allObjTree_->Write();
-  cutflowE_->Write();
-  cutflowM_->Write();
+  cutTree_->Write();
+  if(effTree_) effTree_->Write();
 
   delete outputFile_;
 
   outputFile_ = 0;
   evtTree_ = 0;
   allObjTree_ = 0;
-  cutflowE_ = 0;
-  cutflowM_ = 0;
+  cutTree_ = 0;
+  effTree_ = 0;
 
   return true;
 }
