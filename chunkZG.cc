@@ -9,10 +9,12 @@ chunkZG(TString const& _sourceName, TString const& _outputName)
   TFile* source(TFile::Open(_sourceName));
   TTree* eventIn(static_cast<TTree*>(source->Get("eventVars")));
   TTree* objIn(static_cast<TTree*>(source->Get("allObjects")));
+  TTree* cutIn(static_cast<TTree*>(source->Get("cutTree")));
 
   TFile* outputFile(TFile::Open(_outputName, "recreate"));
   TTree* eventOut(eventIn->CloneTree(0));
   TTree* objOut(objIn->CloneTree(0));
+  TTree* cutOut(cutIn->CloneTree(0));
 
   TChain skimInput("eventVars");
   skimInput.Add(_sourceName);
@@ -30,9 +32,11 @@ chunkZG(TString const& _sourceName, TString const& _outputName)
 
     eventIn->GetEntry(iEntry - 1);
     objIn->GetEntry(iEntry - 1);
+    cutIn->GetEntry(iEntry - 1);
 
     eventOut->Fill();
     objOut->Fill();
+    cutOut->Fill();
   }
 
   delete source;

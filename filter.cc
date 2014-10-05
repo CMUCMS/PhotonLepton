@@ -26,6 +26,8 @@
 #include <map>
 #include <bitset>
 
+#include "Toolset/GenTreeViewer/test/GenDecayFilterRA3.cc"
+
 bool const USEBEAMSPOTIP(false);
 
 enum FilterTypes {
@@ -37,6 +39,10 @@ enum FilterTypes {
   kFakePhotonAndMuon,
   kPhotonAndFakeElectron,
   kPhotonAndFakeMuon,
+  kElePhotonAndFakeElectron,
+  kElePhotonAndFakeMuon,
+  kFakePhotonAndFakeElectron,
+  kFakePhotonAndFakeMuon,
   nFilterTypes
 };
 
@@ -48,7 +54,11 @@ TString filterNames[nFilterTypes] = {
   "FakePhotonAndElectron",
   "FakePhotonAndMuon",
   "PhotonAndFakeElectron",
-  "PhotonAndFakeMuon"
+  "PhotonAndFakeMuon",
+  "ElePhotonAndFakeElectron",
+  "ElePhotonAndFakeMuon",
+  "FakePhotonAndFakeElectron",
+  "FakePhotonAndFakeMuon"
 };
 
 enum Cuts {
@@ -114,6 +124,8 @@ private:
   } effVars_;
 
   double radiationVetoThreshold_;
+
+  GenDecayFilterRA3* genFilter_;
 };
 
 PhotonLeptonFilter::PhotonLeptonFilter() :
@@ -125,7 +137,8 @@ PhotonLeptonFilter::PhotonLeptonFilter() :
   effTree_(0),
   cutTree_(0),
   goodLumis_(),
-  radiationVetoThreshold_(0.)
+  radiationVetoThreshold_(0.),
+  genFilter_(0)
 {
 }
 
@@ -133,6 +146,7 @@ PhotonLeptonFilter::~PhotonLeptonFilter()
 {
   delete effTree_;
   delete cutTree_;
+  delete genFilter_;
 }
 
 bool
@@ -186,6 +200,9 @@ PhotonLeptonFilter::initialize(char const* _outputDir, char const* _configFileNa
   for(int iP(0); iP != gridParams->GetEntries(); ++iP)
     eventProducer_.addGridParam(gridParams->At(iP)->GetName());
   delete gridParams;
+
+  if(configRecords["GENFILTER"].Length() != 0)
+    genFilter_ = new GenDecayFilterRA3(configRecords["GENFILTER"]);
 
   TObjArray* filters(configRecords["FILTERS"].Tokenize(" "));
   for(int iF(0); iF != filters->GetEntries(); ++iF){
@@ -371,6 +388,8 @@ PhotonLeptonFilter::run()
         throw susy::Exception(susy::Exception::kIOError, "Corrupt input");
     
       if(iEntry % 1000 == 0) std::cout << "Analyzing event " << iEntry << std::endl;
+
+      if(genFilter_ && !genFilter_->pass(event)) continue;
 
       cutflowE = 0;
       cutflowM = 0;
@@ -865,6 +884,10 @@ PhotonLeptonFilter::run()
       filterResults_[kFakePhotonAndMuon] = nFakePhoton != 0 && nCandMuon != 0;
       filterResults_[kPhotonAndFakeElectron] = nCandPhoton != 0 && nFakeElectron != 0;
       filterResults_[kPhotonAndFakeMuon] = nCandPhoton != 0 && nFakeMuon != 0;
+      filterResults_[kElePhotonAndFakeElectron] = nElePhoton != 0 && nFakeElectron != 0;
+      filterResults_[kElePhotonAndFakeMuon] = nElePhoton != 0 && nFakeMuon != 0;
+      filterResults_[kFakePhotonAndFakeElectron] = nFakePhoton != 0 && nFakeElectron != 0;
+      filterResults_[kFakePhotonAndFakeMuon] = nFakePhoton != 0 && nFakeMuon != 0;
 
       if(nElePhoton == 1 && nCandElectron == 1){
         // is the only elePhoton actually the candidate electron?
