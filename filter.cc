@@ -43,7 +43,16 @@ enum FilterTypes {
   kElePhotonAndFakeMuon,
   kFakePhotonAndFakeElectron,
   kFakePhotonAndFakeMuon,
-  nFilterTypes
+  kSoftPhotonAndElectron,
+  kSoftPhotonAndMuon,
+  kSoftElePhotonAndElectron,
+  kSoftElePhotonAndMuon,
+  kSoftFakePhotonAndElectron,
+  kSoftFakePhotonAndMuon,
+  kSoftPhotonAndFakeElectron,
+  kSoftPhotonAndFakeMuon,
+  nFilterTypes,
+  nHardPhotonFilters = kSoftPhotonAndElectron
 };
 
 TString filterNames[nFilterTypes] = {
@@ -58,7 +67,15 @@ TString filterNames[nFilterTypes] = {
   "ElePhotonAndFakeElectron",
   "ElePhotonAndFakeMuon",
   "FakePhotonAndFakeElectron",
-  "FakePhotonAndFakeMuon"
+  "FakePhotonAndFakeMuon",
+  "SoftPhotonAndElectron",
+  "SoftPhotonAndMuon",
+  "SoftElePhotonAndElectron",
+  "SoftElePhotonAndMuon",
+  "SoftFakePhotonAndElectron",
+  "SoftFakePhotonAndMuon",
+  "SoftPhotonAndFakeElectron",
+  "SoftPhotonAndFakeMuon"
 };
 
 enum Cuts {
@@ -93,7 +110,7 @@ private:
 
   TTree* effTree_;
   TTree* cutTree_;
-  
+
   std::bitset<nFilterTypes> useEvents_;
 
   susy::GoodLumis goodLumis_;
@@ -103,6 +120,9 @@ private:
   bool ph_isCand_[susy::NMAX];
   bool ph_isFake_[susy::NMAX];
   bool ph_isEle_[susy::NMAX];
+  bool ph_isSoftCand_[susy::NMAX];
+  bool ph_isSoftFake_[susy::NMAX];
+  bool ph_isSoftEle_[susy::NMAX];
   bool el_isCand_[susy::NMAX];
   bool el_isFake_[susy::NMAX];
   bool mu_isCand_[susy::NMAX];
@@ -156,7 +176,7 @@ PhotonLeptonFilter::initialize(char const* _outputDir, char const* _configFileNa
 
   std::map<TString, TString> configRecords;
 
-  TPRegexp configPat("^[ ]*([A-Z0-9_]+)[ ]*=[ ]*([^ ].*)$");
+  TPRegexp configPat("^[ ]*([A-Z0-9_]+)[ ]*([+]?=)[ ]*([^ ].*)$");
   std::string buf;
   std::stringstream bufs;
   TString line;
@@ -178,9 +198,14 @@ PhotonLeptonFilter::initialize(char const* _outputDir, char const* _configFileNa
       line = buf;
 
       TObjArray* matches(configPat.MatchS(line));
-      if(matches->GetEntries() == 3){
-        std::cout << matches->At(1)->GetName() << " = " << matches->At(2)->GetName() << std::endl;
-        configRecords[matches->At(1)->GetName()] = matches->At(2)->GetName();
+      if(matches->GetEntries() == 4){
+        std::cout << matches->At(1)->GetName() << " " << matches->At(2)->GetName() << " " << matches->At(3)->GetName() << std::endl;
+        if(TString(matches->At(2)->GetName()) == "=")
+          configRecords[matches->At(1)->GetName()] = matches->At(3)->GetName();
+        else{
+          configRecords[matches->At(1)->GetName()] += " ";
+          configRecords[matches->At(1)->GetName()] += matches->At(3)->GetName();
+        }
       }
       delete matches;
     }
@@ -209,7 +234,7 @@ PhotonLeptonFilter::initialize(char const* _outputDir, char const* _configFileNa
     TString filter(filters->At(iF)->GetName());
     TString* pF(std::find(filterNames, filterNames + nFilterTypes, filter));
     if(pF == filterNames + nFilterTypes){
-      std::cerr << ("Filter type " + buf + " not defined") << std::endl;
+      std::cerr << ("Filter type " + filter + " not defined") << std::endl;
       if(throw_) throw std::invalid_argument(filter.Data());
       else return false;
     }
@@ -230,6 +255,9 @@ PhotonLeptonFilter::initialize(char const* _outputDir, char const* _configFileNa
   allObjTree_->Branch("photon.isCand", ph_isCand_, "isCand[photon.size]/O");
   allObjTree_->Branch("photon.isFake", ph_isFake_, "isFake[photon.size]/O");
   allObjTree_->Branch("photon.isEle", ph_isEle_, "isEle[photon.size]/O");
+  allObjTree_->Branch("photon.isSoftCand", ph_isSoftCand_, "isSoftCand[photon.size]/O");
+  allObjTree_->Branch("photon.isSoftFake", ph_isSoftFake_, "isSoftFake[photon.size]/O");
+  allObjTree_->Branch("photon.isSoftEle", ph_isSoftEle_, "isSoftEle[photon.size]/O");
   allObjTree_->Branch("electron.isCand", el_isCand_, "isCand[electron.size]/O");
   allObjTree_->Branch("electron.isFake", el_isFake_, "isFake[electron.size]/O");
   allObjTree_->Branch("muon.isCand", mu_isCand_, "isCand[muon.size]/O");
@@ -340,7 +368,7 @@ PhotonLeptonFilter::run()
   cutTree_->SetBranchAddress("cutflowE", &cutflowE);
   cutTree_->SetBranchAddress("cutflowM", &cutflowM);
 
-  /* TRIGGERS */
+  /* TRIGGERS (ONLY FOR CUTFLOW - NO FILTERING DONE) */
 
   TString electronHLT[] = {
     "HLT_Photon36_CaloId10_Iso50_Photon22_CaloId10_Iso50"
@@ -379,6 +407,15 @@ PhotonLeptonFilter::run()
   std::bitset<susy::nPhotonCriteria> phNoVeto(susy::ObjectSelector::phReferences[susy::PhLoose12Pix]);
   phNoVeto.reset(susy::PhElectronVeto);
 
+  /* EVENT TYPE MASKS */
+
+  bool useHardPhoton(false);
+  bool useSoftPhoton(false);
+  for(unsigned iF(0); iF != nHardPhotonFilters; ++iF)
+    if(useEvents_[iF]) useHardPhoton = true;
+  for(unsigned iF(nHardPhotonFilters); iF != nFilterTypes; ++iF)
+    if(useEvents_[iF]) useSoftPhoton = true;
+
   /* START LOOP */
   
   int nRead(0);
@@ -398,9 +435,9 @@ PhotonLeptonFilter::run()
       std::bitset<nMuonHLT> passMuonHLT;
 
       for(unsigned iHLT(0); iHLT != nElectronHLT; ++iHLT)
-        if(event.hltMap.pass(electronHLT[iHLT] + "_v*")) passElectronHLT.set(iHLT);
+        passElectronHLT[iHLT] = event.hltMap.pass(electronHLT[iHLT] + "_v*");
       for(unsigned iHLT(0); iHLT != nMuonHLT; ++iHLT)
-        if(event.hltMap.pass(muonHLT[iHLT] + "_v*")) passMuonHLT.set(iHLT);
+        passMuonHLT[iHLT] = event.hltMap.pass(muonHLT[iHLT] + "_v*");
 
       if(passElectronHLT.any() && cutflowE == kHLT - 1) ++cutflowE;
       if(passMuonHLT.any() && cutflowM == kHLT - 1) ++cutflowM;
@@ -556,84 +593,121 @@ PhotonLeptonFilter::run()
       unsigned nCandPhoton(0);
       unsigned nFakePhoton(0);
       unsigned nElePhoton(0);
+      unsigned nSoftCandPhoton(0);
+      unsigned nSoftFakePhoton(0);
+      unsigned nSoftElePhoton(0);
 
       std::fill_n(ph_isCand_, susy::NMAX, false);
       std::fill_n(ph_isFake_, susy::NMAX, false);
       std::fill_n(ph_isEle_, susy::NMAX, false);
+      std::fill_n(ph_isSoftCand_, susy::NMAX, false);
+      std::fill_n(ph_isSoftFake_, susy::NMAX, false);
+      std::fill_n(ph_isSoftEle_, susy::NMAX, false);
 
       int leadGoodPhoton(-1);
 
       for(unsigned iPh(0); iPh != nPh; ++iPh){
         susy::Photon const& ph(*photons[iPh]);
 
-        if(ph.momentum.Pt() < 25.) break;
-        if(std::abs(ph.caloPosition.Eta()) > susy::etaGapBegin) continue;
-
-        unsigned iPF(0);
-        for(; iPF != nPF; ++iPF){
-          susy::PFParticle const& part(*pfParticles[iPF]);
-          if(part.momentum.Pt() < 3.) continue;
-          TVector3 dir(ph.caloPosition - part.vertex);
-          if(std::abs(part.pdgId) == 211 &&
-             std::abs(dir.Eta() - part.momentum.Eta()) < 0.005 &&
-             std::abs(TVector2::Phi_mpi_pi(dir.Phi() - part.momentum.Phi())) < 0.02) break;
-        }
-        if(iPF != nPF) continue;
-
-        unsigned iL(0);
-        for(; iL != nMu; ++iL){
-          if(muons[iL]->momentum.Pt() < 2.){
-            iL = nMu;
-            break;
-          }
-          if(muons[iL]->momentum.DeltaR(ph.momentum) < 0.3) break;
-        }
-        if(iL != nMu) continue;
-
-        bool gsfVeto(true);
-        for(iL = 0; iL != nEl; ++iL){
-          if(electrons[iL]->momentum.Pt() < 2.){
-            iL = nEl;
-            break;
-          }
-          if(electrons[iL]->superClusterIndex == ph.superClusterIndex){
-            gsfVeto = false;
-            continue;
-          }
-          double dR(electrons[iL]->superCluster->position.DeltaR(ph.caloPosition));
-          if(dR < 0.02) gsfVeto = false;
-          else if(dR < 0.3) break;
-        }
-        if(iL != nEl) continue;
-
         susy::PhotonVars vars(ph, event);
-        bool isGood(susy::ObjectSelector::isGoodPhoton(vars, susy::PhLoose12Pix, &phIdResults) && gsfVeto); // order matters! isGoodPhoton must execute
 
-        if(isGood){
-          if(leadGoodPhoton < 0) leadGoodPhoton = iPh;
-          
-          ph_isCand_[iPh] = true;
-          ++nCandPhoton;
+        if(useSoftPhoton){
+          if((vars.iSubdet == 0 && ph.sigmaIetaIeta > 0.005) ||
+             (vars.iSubdet == 1 && std::abs(ph.caloPosition.Eta()) < 2.5 && ph.sigmaIetaIeta > 0.019)){
 
-          if(effTree_){
-            for(unsigned iG(0); iG != genPhotons.size(); ++iG){
-              susy::Particle const& genPhoton(*genPhotons[iG].first);
-              if(genPhoton.momentum.Vect().DeltaR(ph.caloPosition - genPhoton.vertex) < 0.1)
-                genMatchedPhotons[iG] = &ph;
+            bool isPhoton(susy::ObjectSelector::isGoodPhoton(vars, susy::PhMedium12, &phIdResults));
+
+            if(isPhoton){
+              ph_isSoftCand_[iPh] = true;
+              ++nSoftCandPhoton;
+            }
+            else if((phIdResults & phNoVeto) == phNoVeto){
+              ph_isSoftEle_[iPh] = true;
+              ++nSoftElePhoton;
+            }
+            else if(phIdResults[susy::PhElectronVeto]){
+              ph_isSoftFake_[iPh] = true;
+              ++nSoftFakePhoton;
             }
           }
         }
-        else if((phIdResults & phNoVeto) == phNoVeto){
-          ph_isEle_[iPh] = true;
-          ++nElePhoton;
-        }
-        else if(gsfVeto && phIdResults[susy::PhElectronVeto]){
-          ph_isFake_[iPh] = true;
-          ++nFakePhoton;
+
+        if(useHardPhoton){
+          if(ph.momentum.Pt() > 25. && std::abs(ph.caloPosition.Eta()) < susy::etaGapBegin){
+
+            unsigned iPF(0);
+            for(; iPF != nPF; ++iPF){
+              susy::PFParticle const& part(*pfParticles[iPF]);
+              if(part.momentum.Pt() < 3.) continue;
+              TVector3 dir(ph.caloPosition - part.vertex);
+              if(std::abs(part.pdgId) == 211 &&
+                 std::abs(dir.Eta() - part.momentum.Eta()) < 0.005 &&
+                 std::abs(TVector2::Phi_mpi_pi(dir.Phi() - part.momentum.Phi())) < 0.02) break;
+            }
+
+            if(iPF == nPF){
+
+              unsigned iL(0);
+              for(; iL != nMu; ++iL){
+                if(muons[iL]->momentum.Pt() < 2.){
+                  iL = nMu;
+                  break;
+                }
+                if(muons[iL]->momentum.DeltaR(ph.momentum) < 0.3) break;
+              }
+
+              if(iL == nMu){
+
+                bool gsfVeto(false);
+                for(iL = 0; iL != nEl; ++iL){
+                  if(electrons[iL]->momentum.Pt() < 2.){
+                    iL = nEl;
+                    break;
+                  }
+                  if(electrons[iL]->superClusterIndex == ph.superClusterIndex){
+                    gsfVeto = false;
+                    continue;
+                  }
+                  double dR(electrons[iL]->superCluster->position.DeltaR(ph.caloPosition));
+                  if(dR < 0.02) gsfVeto = false;
+                  else if(dR < 0.3) break;
+                }
+
+                if(iL == nEl){
+
+                  bool isPhoton(susy::ObjectSelector::isGoodPhoton(vars, susy::PhLoose12Pix, &phIdResults) && gsfVeto); // order matters! isGoodPhoton must execute                  
+
+                  if(isPhoton){
+                    if(leadGoodPhoton < 0) leadGoodPhoton = iPh;
+          
+                    ph_isCand_[iPh] = true;
+                    ++nCandPhoton;
+
+                    if(effTree_){
+                      for(unsigned iG(0); iG != genPhotons.size(); ++iG){
+                        susy::Particle const& genPhoton(*genPhotons[iG].first);
+                        if(genPhoton.momentum.Vect().DeltaR(ph.caloPosition - genPhoton.vertex) < 0.1)
+                          genMatchedPhotons[iG] = &ph;
+                      }
+                    }
+                  }
+                  else if((phIdResults & phNoVeto) == phNoVeto){
+                    ph_isEle_[iPh] = true;
+                    ++nElePhoton;
+                  }
+                  else if(gsfVeto && phIdResults[susy::PhElectronVeto]){
+                    ph_isFake_[iPh] = true;
+                    ++nFakePhoton;
+                  }
+                }
+              }
+            }
+          }
         }
       }
 
-      if(nCandPhoton == 0 && nElePhoton == 0 && nFakePhoton == 0) continue;
+      if(!useSoftPhoton && nCandPhoton == 0 && nElePhoton == 0 && nFakePhoton == 0) continue;
+      if(!useHardPhoton && nSoftCandPhoton == 0 && nSoftElePhoton == 0 && nSoftFakePhoton == 0) continue;
 
       if(leadGoodPhoton >= 0 && photons[leadGoodPhoton]->momentum.Pt() > 40.){
         if(cutflowE == kGoodPhoton - 1){
@@ -889,17 +963,41 @@ PhotonLeptonFilter::run()
       filterResults_[kFakePhotonAndFakeElectron] = nFakePhoton != 0 && nFakeElectron != 0;
       filterResults_[kFakePhotonAndFakeMuon] = nFakePhoton != 0 && nFakeMuon != 0;
 
-      if(nElePhoton == 1 && nCandElectron == 1){
-        // is the only elePhoton actually the candidate electron?
-        unsigned iElePh(0);
-        for(; iElePh != nPh; ++iElePh)
-          if(ph_isEle_[iElePh]) break;
+      filterResults_[kSoftPhotonAndElectron] = nSoftCandPhoton != 0 && nCandElectron != 0;
+      filterResults_[kSoftPhotonAndMuon] = nSoftCandPhoton != 0 && nCandMuon != 0;
+      filterResults_[kSoftElePhotonAndElectron] = nSoftElePhoton != 0 && nCandElectron != 0;
+      filterResults_[kSoftElePhotonAndMuon] = nSoftElePhoton != 0 && nCandMuon != 0;
+      filterResults_[kSoftFakePhotonAndElectron] = nSoftFakePhoton != 0 && nCandElectron != 0;
+      filterResults_[kSoftFakePhotonAndMuon] = nSoftFakePhoton != 0 && nCandMuon != 0;
+      filterResults_[kSoftPhotonAndFakeElectron] = nSoftCandPhoton != 0 && nFakeElectron != 0;
+      filterResults_[kSoftPhotonAndFakeMuon] = nSoftCandPhoton != 0 && nFakeMuon != 0;
+
+      if(nCandElectron == 1){
         unsigned iCandEl(0);
         for(; iCandEl != nEl; ++iCandEl)
           if(el_isCand_[iCandEl]) break;
-        if(electrons[iCandEl]->superClusterIndex == photons[iElePh]->superClusterIndex ||
-           electrons[iCandEl]->superCluster->position.DeltaR(photons[iElePh]->caloPosition) < 0.02)
-          filterResults_[kElePhotonAndElectron] = false;
+
+        if(nElePhoton == 1){
+          // is the only elePhoton actually the candidate electron?
+          unsigned iElePh(0);
+          for(; iElePh != nPh; ++iElePh)
+            if(ph_isEle_[iElePh]) break;
+
+          if(electrons[iCandEl]->superClusterIndex == photons[iElePh]->superClusterIndex ||
+             electrons[iCandEl]->superCluster->position.DeltaR(photons[iElePh]->caloPosition) < 0.02)
+            filterResults_[kElePhotonAndElectron] = false;
+        }
+
+        if(nSoftElePhoton == 1){
+          // is the only elePhoton actually the candidate electron?
+          unsigned iElePh(0);
+          for(; iElePh != nPh; ++iElePh)
+            if(ph_isSoftEle_[iElePh]) break;
+
+          if(electrons[iCandEl]->superClusterIndex == photons[iElePh]->superClusterIndex ||
+             electrons[iCandEl]->superCluster->position.DeltaR(photons[iElePh]->caloPosition) < 0.02)
+            filterResults_[kSoftElePhotonAndElectron] = false;
+        }
       }
 
       unsigned iF(0);
