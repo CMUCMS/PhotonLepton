@@ -677,10 +677,11 @@ PhotonLeptonFilter::run()
 
         susy::PhotonVars vars(ph, event);
 
+        if(vars.chargedHadronIso > 15. || vars.neutralHadronIso > 10. || vars.photonIso > 10.) continue;
+
         if(useSoftPhoton){
           if(((vars.iSubdet == 0 && ph.sigmaIetaIeta > 0.005) ||
-              (vars.iSubdet == 1 && std::abs(ph.caloPosition.Eta()) < 2.5 && ph.sigmaIetaIeta > 0.019)) &&
-             (vars.chargedHadronIso < 15. && vars.neutralHadronIso < 10. && vars.photonIso < 10.)){
+              (vars.iSubdet == 1 && std::abs(ph.caloPosition.Eta()) < 2.5 && ph.sigmaIetaIeta > 0.019))){
             bool isPhoton(susy::ObjectSelector::isGoodPhoton(vars, susy::PhMedium12, &phIdResults));
 
             if(isPhoton){
@@ -871,6 +872,8 @@ PhotonLeptonFilter::run()
 
         if(vars.pt < 25. || vars.iSubdet == -1) continue;
 
+        if(vars.combRelIso > 1.) continue;
+
         bool isMedium(false);
         if(USEBEAMSPOTIP){
           susy::ObjectSelector::isGoodElectron(vars, susy::ElMedium12, &elIdResults);
@@ -986,7 +989,7 @@ PhotonLeptonFilter::run()
 
         susy::MuonVars vars(mu, event);
 
-        if(vars.iSubdet == -1 || !vars.isLoose) continue;
+        if(vars.iSubdet == -1 || !vars.isLoose || vars.combRelIso > 1.) continue;
 
         bool isTight(false);
         if(USEBEAMSPOTIP){
