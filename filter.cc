@@ -773,9 +773,6 @@ PhotonLeptonFilter::run()
         }
       }
 
-      if(!useSoftPhoton && nCandPhoton == 0 && nElePhoton == 0 && nFakePhoton == 0) continue;
-      if(!useHardPhoton && nSoftCandPhoton == 0 && nSoftElePhoton == 0 && nSoftFakePhoton == 0) continue;
-
       if(leadGoodPhoton >= 0 && photons[leadGoodPhoton]->momentum.Pt() > 40.){
         std::vector<susy::TriggerObjectCollection> photonHLTObjectsE[nElectronHLT];
         for(unsigned iHLT(0); iHLT != nElectronHLT; ++iHLT){
@@ -1084,98 +1081,7 @@ PhotonLeptonFilter::run()
         }
       }
 
-      /* DETERMINE THE RESULT OF EACH FILTER */
-
-      filterResults_[kPhotonAndElectron] = nCandPhoton != 0 && nCandElectron != 0;
-      filterResults_[kPhotonAndMuon] = nCandPhoton != 0 && nCandMuon != 0;
-      filterResults_[kElePhotonAndElectron] = nElePhoton != 0 && nCandElectron != 0;
-      filterResults_[kElePhotonAndMuon] = nElePhoton != 0 && nCandMuon != 0;
-      filterResults_[kFakePhotonAndElectron] = nFakePhoton != 0 && nCandElectron != 0;
-      filterResults_[kFakePhotonAndMuon] = nFakePhoton != 0 && nCandMuon != 0;
-      filterResults_[kPhotonAndFakeElectron] = nCandPhoton != 0 && nFakeElectron != 0;
-      filterResults_[kPhotonAndFakeMuon] = nCandPhoton != 0 && nFakeMuon != 0;
-      filterResults_[kElePhotonAndFakeElectron] = nElePhoton != 0 && nFakeElectron != 0;
-      filterResults_[kElePhotonAndFakeMuon] = nElePhoton != 0 && nFakeMuon != 0;
-      filterResults_[kFakePhotonAndFakeElectron] = nFakePhoton != 0 && nFakeElectron != 0;
-      filterResults_[kFakePhotonAndFakeMuon] = nFakePhoton != 0 && nFakeMuon != 0;
-
-      filterResults_[kSoftPhotonAndElectron] = nSoftCandPhoton != 0 && nCandElectron != 0;
-      filterResults_[kSoftPhotonAndMuon] = nSoftCandPhoton != 0 && nCandMuon != 0;
-      filterResults_[kSoftElePhotonAndElectron] = nSoftElePhoton != 0 && nCandElectron != 0;
-      filterResults_[kSoftElePhotonAndMuon] = nSoftElePhoton != 0 && nCandMuon != 0;
-      filterResults_[kSoftFakePhotonAndElectron] = nSoftFakePhoton != 0 && nCandElectron != 0;
-      filterResults_[kSoftFakePhotonAndMuon] = nSoftFakePhoton != 0 && nCandMuon != 0;
-      filterResults_[kSoftPhotonAndFakeElectron] = nSoftCandPhoton != 0 && nFakeElectron != 0;
-      filterResults_[kSoftPhotonAndFakeMuon] = nSoftCandPhoton != 0 && nFakeMuon != 0;
-
-      if(nCandElectron == 1){
-        unsigned iCandEl(0);
-        for(; iCandEl != nEl; ++iCandEl)
-          if(el_isCand_[iCandEl]) break;
-
-        if(nElePhoton == 1){
-          // is the only elePhoton actually the candidate electron?
-          unsigned iElePh(0);
-          for(; iElePh != nPh; ++iElePh)
-            if(ph_isEle_[iElePh]) break;
-
-          if(electrons[iCandEl]->superClusterIndex == photons[iElePh]->superClusterIndex ||
-             electrons[iCandEl]->superCluster->position.DeltaR(photons[iElePh]->caloPosition) < 0.02)
-            filterResults_[kElePhotonAndElectron] = false;
-        }
-
-        if(nSoftElePhoton == 1){
-          // is the only elePhoton actually the candidate electron?
-          unsigned iElePh(0);
-          for(; iElePh != nPh; ++iElePh)
-            if(ph_isSoftEle_[iElePh]) break;
-
-          if(electrons[iCandEl]->superClusterIndex == photons[iElePh]->superClusterIndex ||
-             electrons[iCandEl]->superCluster->position.DeltaR(photons[iElePh]->caloPosition) < 0.02)
-            filterResults_[kSoftElePhotonAndElectron] = false;
-        }
-      }
-
-      unsigned iF(0);
-      for(; iF != nFilterTypes; ++iF)
-        if(filterResults_[iF] && useEvents_[iF]) break;
-
-      if(iF == nFilterTypes) continue;
-
-      /* EVENT PASSES AT LEAST ONE FILTER - LOAD FULL EVENT AND FILL OUTPUT */
-
-      fullEvent.getEntry(iEntry);
-
-      std::vector<const susy::PFJet*> jets(eventProducer_.sortJets(fullEvent.pfJets["ak5"]));
-      unsigned nJ(jets.size());
-
-      for(unsigned iJ(0); iJ != nJ; ++iJ){
-        jt_isCand_[iJ] = false;
-
-        susy::PFJet const& jet(*jets[iJ]);
-
-        susy::JetVars vars(jet, event);
-        if(!vars.isLoose || !vars.passPUJetIdLoose) continue;
-
-        unsigned iC;
-
-        iC = 0;
-        for(; iC != nEl; ++iC)
-          if(el_isCand_[iC] && electrons[iC]->momentum.DeltaR(jet.momentum) < 0.5) break;
-        if(iC != nEl) continue;
-
-        iC = 0;
-        for(; iC != nMu; ++iC)
-          if(mu_isCand_[iC] && muons[iC]->momentum.DeltaR(jet.momentum) < 0.5) break;
-        if(iC != nMu) continue;
-
-        iC = 0;
-        for(; iC != nPh; ++iC)
-          if((ph_isCand_[iC] || ph_isEle_[iC]) && photons[iC]->momentum.DeltaR(jet.momentum) < 0.5) break;
-        if(iC != nPh) continue;
-
-        jt_isCand_[iJ] = true;
-      }
+      /* FILL GEN EFFICIENCY TREE */
 
       if(effTree_){
         for(unsigned iG(0); iG != genPhotons.size(); ++iG){
@@ -1240,6 +1146,101 @@ PhotonLeptonFilter::run()
 
           effTree_->Fill();
         }
+      }
+
+      /* DETERMINE THE RESULT OF EACH FILTER */
+
+      filterResults_[kPhotonAndElectron] = nCandPhoton != 0 && nCandElectron != 0;
+      filterResults_[kPhotonAndMuon] = nCandPhoton != 0 && nCandMuon != 0;
+      filterResults_[kElePhotonAndElectron] = nElePhoton != 0 && nCandElectron != 0;
+      filterResults_[kElePhotonAndMuon] = nElePhoton != 0 && nCandMuon != 0;
+      filterResults_[kFakePhotonAndElectron] = nFakePhoton != 0 && nCandElectron != 0;
+      filterResults_[kFakePhotonAndMuon] = nFakePhoton != 0 && nCandMuon != 0;
+      filterResults_[kPhotonAndFakeElectron] = nCandPhoton != 0 && nFakeElectron != 0;
+      filterResults_[kPhotonAndFakeMuon] = nCandPhoton != 0 && nFakeMuon != 0;
+      filterResults_[kElePhotonAndFakeElectron] = nElePhoton != 0 && nFakeElectron != 0;
+      filterResults_[kElePhotonAndFakeMuon] = nElePhoton != 0 && nFakeMuon != 0;
+      filterResults_[kFakePhotonAndFakeElectron] = nFakePhoton != 0 && nFakeElectron != 0;
+      filterResults_[kFakePhotonAndFakeMuon] = nFakePhoton != 0 && nFakeMuon != 0;
+
+      filterResults_[kSoftPhotonAndElectron] = nSoftCandPhoton != 0 && nCandElectron != 0;
+      filterResults_[kSoftPhotonAndMuon] = nSoftCandPhoton != 0 && nCandMuon != 0;
+      filterResults_[kSoftElePhotonAndElectron] = nSoftElePhoton != 0 && nCandElectron != 0;
+      filterResults_[kSoftElePhotonAndMuon] = nSoftElePhoton != 0 && nCandMuon != 0;
+      filterResults_[kSoftFakePhotonAndElectron] = nSoftFakePhoton != 0 && nCandElectron != 0;
+      filterResults_[kSoftFakePhotonAndMuon] = nSoftFakePhoton != 0 && nCandMuon != 0;
+      filterResults_[kSoftPhotonAndFakeElectron] = nSoftCandPhoton != 0 && nFakeElectron != 0;
+      filterResults_[kSoftPhotonAndFakeMuon] = nSoftCandPhoton != 0 && nFakeMuon != 0;
+
+      if(nCandElectron == 1){
+        unsigned iCandEl(0);
+        for(; iCandEl != nEl; ++iCandEl)
+          if(el_isCand_[iCandEl]) break;
+
+        if(nElePhoton == 1){
+          // is the only elePhoton actually the candidate electron?
+          unsigned iElePh(0);
+          for(; iElePh != nPh; ++iElePh)
+            if(ph_isEle_[iElePh]) break;
+
+          if(electrons[iCandEl]->superClusterIndex == photons[iElePh]->superClusterIndex ||
+             electrons[iCandEl]->superCluster->position.DeltaR(photons[iElePh]->caloPosition) < 0.02)
+            filterResults_[kElePhotonAndElectron] = false;
+        }
+
+        if(nSoftElePhoton == 1){
+          // is the only elePhoton actually the candidate electron?
+          unsigned iElePh(0);
+          for(; iElePh != nPh; ++iElePh)
+            if(ph_isSoftEle_[iElePh]) break;
+
+          if(electrons[iCandEl]->superClusterIndex == photons[iElePh]->superClusterIndex ||
+             electrons[iCandEl]->superCluster->position.DeltaR(photons[iElePh]->caloPosition) < 0.02)
+            filterResults_[kSoftElePhotonAndElectron] = false;
+        }
+      }
+
+      /* DID THE EVENT PASS AT LEAST ONE FILTER? */
+
+      unsigned iF(0);
+      for(; iF != nFilterTypes; ++iF)
+        if(filterResults_[iF] && useEvents_[iF]) break;
+
+      if(iF == nFilterTypes) continue;
+
+      /* EVENT PASSES AT LEAST ONE FILTER - LOAD FULL EVENT AND FILL OUTPUT */
+
+      fullEvent.getEntry(iEntry);
+
+      std::vector<const susy::PFJet*> jets(eventProducer_.sortJets(fullEvent.pfJets["ak5"]));
+      unsigned nJ(jets.size());
+
+      for(unsigned iJ(0); iJ != nJ; ++iJ){
+        jt_isCand_[iJ] = false;
+
+        susy::PFJet const& jet(*jets[iJ]);
+
+        susy::JetVars vars(jet, event);
+        if(!vars.isLoose || !vars.passPUJetIdLoose) continue;
+
+        unsigned iC;
+
+        iC = 0;
+        for(; iC != nEl; ++iC)
+          if(el_isCand_[iC] && electrons[iC]->momentum.DeltaR(jet.momentum) < 0.5) break;
+        if(iC != nEl) continue;
+
+        iC = 0;
+        for(; iC != nMu; ++iC)
+          if(mu_isCand_[iC] && muons[iC]->momentum.DeltaR(jet.momentum) < 0.5) break;
+        if(iC != nMu) continue;
+
+        iC = 0;
+        for(; iC != nPh; ++iC)
+          if((ph_isCand_[iC] || ph_isEle_[iC]) && photons[iC]->momentum.DeltaR(jet.momentum) < 0.5) break;
+        if(iC != nPh) continue;
+
+        jt_isCand_[iJ] = true;
       }
 
       eventProducer_.extractTriggerObjects(fullTriggerEvent);
