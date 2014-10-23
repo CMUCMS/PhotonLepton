@@ -80,11 +80,11 @@ TString filterNames[nFilterTypes] = {
 
 enum Cut {
   kAllEvents,
+  kGoodLumi,
   kHLTE,
   kHLTM,
   kHLTESingle,
   kHLTMSingle,
-  kGoodLumi,
   kMetFilter,
   kGoodVertex,
   kRadiationVeto,
@@ -100,11 +100,11 @@ enum Cut {
 
 TString cuts[nCuts] = {
   "AllEvents",
+  "GoodLumi",
   "HLTE",
   "HLTM",
   "HLTESingle",
   "HLTMSingle",
-  "GoodLumi",
   "MetFilter",
   "GoodVertex",
   "RadiationVeto",
@@ -316,7 +316,7 @@ PhotonLeptonFilter::initialize(char const* _outputDir, char const* _configFileNa
   TString leaves;
   for(unsigned iC(0); iC != nCuts; ++iC){
     leaves += cuts[iC];
-    if(iC == 0) leaves += "/b";
+    if(iC == 0) leaves += "/O";
     if(iC != nCuts - 1) leaves += ":";
   }
   cutTree_->Branch("cutflow", 0, leaves);
@@ -490,6 +490,10 @@ PhotonLeptonFilter::run()
 
       std::fill_n(cutflow + 1, nCuts - 1, false);
 
+      if(!goodLumis_.isGoodLumi(event.runNumber, event.luminosityBlockNumber)) continue;
+
+      cutflow[kGoodLumi] = true;
+
       std::bitset<nElectronHLT> passElectronHLT;
       std::bitset<nMuonHLT> passMuonHLT;
       std::bitset<nSingleElectronHLT> passSingleElectronHLT;
@@ -508,10 +512,6 @@ PhotonLeptonFilter::run()
       if(passMuonHLT.any()) cutflow[kHLTM] = true;
       if(passSingleElectronHLT.any()) cutflow[kHLTESingle] = true;
       if(passSingleMuonHLT.any()) cutflow[kHLTMSingle] = true;
-
-      if(!goodLumis_.isGoodLumi(event.runNumber, event.luminosityBlockNumber)) continue;
-
-      cutflow[kGoodLumi] = true;
 
       if(!event.passMetFilters()) continue;
 
@@ -1002,6 +1002,8 @@ PhotonLeptonFilter::run()
           isTight = vars.isTight;
 
         if(isTight){
+          if(leadGoodMuon < 0) leadGoodMuon = iMu;
+
           mu_isCand_[iMu] = true;
           ++nCandMuon;
 
