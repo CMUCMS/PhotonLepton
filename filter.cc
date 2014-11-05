@@ -5,6 +5,7 @@
 #include "TPRegexp.h"
 #include "TObjArray.h"
 #include "TVector2.h"
+#include "TEntryList.h"
 
 #include "SusyEvent.h"
 #include "SusyTriggerEvent.h"
@@ -87,7 +88,6 @@ enum Cut {
   kHLTMSingle,
   kMetFilter,
   kGoodVertex,
-  kRadiationVeto,
   kGoodPhotonE,
   kGoodPhotonM,
   kGoodSoftPhoton,
@@ -107,7 +107,6 @@ TString cuts[nCuts] = {
   "HLTMSingle",
   "MetFilter",
   "GoodVertex",
-  "RadiationVeto",
   "GoodPhotonE",
   "GoodPhotonM",
   "GoodSoftPhoton",
@@ -121,7 +120,7 @@ class PhotonLeptonFilter : public SimpleTreeProducer {
 public:
   PhotonLeptonFilter();
   ~PhotonLeptonFilter();
-  bool initialize(char const*, char const*, double = 0.);
+  bool initialize(char const*, char const*, bool = false);
   void addInput(char const*, char const* = "");
   bool run();
   void clearInput();
@@ -135,6 +134,8 @@ private:
   TChain fullInput_;
   TChain fullTriggerInput_;
 
+  TEntryList* hardPhotonList_;
+  TEntryList* softPhotonList_;
   TTree* effTree_;
   TTree* cutTree_;
 
@@ -159,18 +160,40 @@ private:
   struct EffTreeVariables {
     //mkbranch
     char pdgId;
+    bool reco;
     bool pass;
     float pt;
     float eta;
     float phi;
     float genPt;
+    float genEta;
+    float genPhi;
     float genIso;
     unsigned char nVtx;
+    float puWeight;
     bool primVtx;
     //mkbranch
   } effVars_;
 
-  double radiationVetoThreshold_;
+  struct GenMatch {
+    susy::Particle const* particle;
+    susy::Photon const* photon;
+    susy::Electron const* electron;
+    susy::Muon const* muon;
+    float genIso;
+    bool pass;
+    GenMatch(susy::Particle const& _part, float _iso) : particle(&_part), photon(0), electron(0), muon(0), genIso(_iso), pass(false) {}
+    GenMatch(GenMatch const& _orig) : particle(_orig.particle), photon(_orig.photon), electron(_orig.electron), muon(_orig.muon), genIso(_orig.genIso), pass(_orig.pass) {}
+    GenMatch& operator=(GenMatch const& _rhs)
+    {
+      particle = _rhs.particle; photon = _rhs.photon; electron = _rhs.electron; muon = _rhs.muon; genIso = _rhs.genIso; pass = _rhs.pass;
+      return *this;
+    }
+  };
+
+  bool storeRadiation_;
+  float radPt_;
+  bool isFSR_;
 
   GenDecayFilterRA3* genFilter_;
 };
@@ -181,23 +204,29 @@ PhotonLeptonFilter::PhotonLeptonFilter() :
   triggerInput_("triggerEventTree"),
   fullInput_("susyTree"),
   fullTriggerInput_("triggerEventTree"),
+  hardPhotonList_(0),
+  softPhotonList_(0),
   effTree_(0),
   cutTree_(0),
   goodLumis_(),
-  radiationVetoThreshold_(0.),
+  storeRadiation_(false),
+  radPt_(0.),
+  isFSR_(false),
   genFilter_(0)
 {
 }
 
 PhotonLeptonFilter::~PhotonLeptonFilter()
 {
+  delete hardPhotonList_;
+  delete softPhotonList_;
   delete effTree_;
   delete cutTree_;
   delete genFilter_;
 }
 
 bool
-PhotonLeptonFilter::initialize(char const* _outputDir, char const* _configFileNames, double _radiationVetoThreshold/* = 0.*/)
+PhotonLeptonFilter::initialize(char const* _outputDir, char const* _configFileNames, bool _storeRadiation/* = false*/)
 {
   /* CONFIGURE */
 
@@ -294,18 +323,35 @@ PhotonLeptonFilter::initialize(char const* _outputDir, char const* _configFileNa
   for(unsigned iF(0); iF != nFilterTypes; ++iF)
     evtTree_->Branch(filterNames[iF], filterResults_ + iF, filterNames[iF] + "/O");
 
+  /* SETUP RADIATION VETO */
+  // Store highest Pt of gen-isolated photon
+  // Non-isolated photon has a sibling (shares motherIndex) particle that is not a neutrino and has Pt > 2 GeV within dR < 0.3
+  storeRadiation_ = _storeRadiation;
+
+  if(storeRadiation_){
+    evtTree_->Branch("radPt", &radPt_, "radPt/F");
+    evtTree_->Branch("isFSR", &isFSR_, "isFSR/O");
+  }
+
   outputFile_->cd();
+
+  hardPhotonList_ = new TEntryList("hardPhotons", "Hard photon events", evtTree_);
+  softPhotonList_ = new TEntryList("softPhotons", "Soft photon events", evtTree_);
 
   if(configRecords["PUSCENARIO"] != ""){
     effTree_ = new TTree("effTree", "Efficiency Tree");
     effTree_->Branch("pdgId", &effVars_.pdgId, "pdgId/B");
+    effTree_->Branch("reco", &effVars_.reco, "reco/O");
     effTree_->Branch("pass", &effVars_.pass, "pass/O");
     effTree_->Branch("pt", &effVars_.pt, "pt/F");
     effTree_->Branch("eta", &effVars_.eta, "eta/F");
     effTree_->Branch("phi", &effVars_.phi, "phi/F");
     effTree_->Branch("genPt", &effVars_.genPt, "genPt/F");
+    effTree_->Branch("genEta", &effVars_.genEta, "genEta/F");
+    effTree_->Branch("genPhi", &effVars_.genPhi, "genPhi/F");
     effTree_->Branch("genIso", &effVars_.genIso, "genIso/F");
     effTree_->Branch("nVtx", &effVars_.nVtx, "nVtx/b");
+    effTree_->Branch("puWeight", &effVars_.puWeight, "puWeight/F");
     effTree_->Branch("primVtx", &effVars_.primVtx, "primVtx/O");
   }
 
@@ -313,13 +359,8 @@ PhotonLeptonFilter::initialize(char const* _outputDir, char const* _configFileNa
   cutTree_->Branch("run", 0, "run/i");
   cutTree_->Branch("lumi", 0, "lumi/i");
   cutTree_->Branch("event", 0, "event/i");
-  TString leaves;
-  for(unsigned iC(0); iC != nCuts; ++iC){
-    leaves += cuts[iC];
-    if(iC == 0) leaves += "/O";
-    if(iC != nCuts - 1) leaves += ":";
-  }
-  cutTree_->Branch("cutflow", 0, leaves);
+  for(unsigned iC(0); iC != nCuts; ++iC)
+    cutTree_->Branch(cuts[iC], 0, cuts[iC] + "/O");
 
   TTree* cfgTree(new TTree("cfgTree", "Configuration parameters"));
   TString* cfgName(new TString);
@@ -337,12 +378,6 @@ PhotonLeptonFilter::initialize(char const* _outputDir, char const* _configFileNa
   delete cfgTree;
   delete cfgName;
   delete cfgVal;
-
-  /* SETUP RADIATION VETO */
-  // veto event if an isolated photon with Pt > |threshold| is found
-  // non-isolated photon has a sibling (shares motherIndex) particle that is not a neutrino and has Pt > 2 GeV within dR < 0.3
-  // when threshold < 0, veto ISR only
-  radiationVetoThreshold_ = _radiationVetoThreshold;
 
   return true;
 }
@@ -377,9 +412,12 @@ PhotonLeptonFilter::run()
   input_.SetBranchStatus("metFilter*", 1);
   input_.SetBranchStatus("hlt*", 1);
   input_.SetBranchStatus("pfParticles*", 1);
-  if(input_.GetBranch("genParticles")) input_.SetBranchStatus("genParticles*", 1);
   susy::ObjectTree::setBranchStatus(input_, true, true, true, false, true); // Photon, Electron, Muon, Jet, Vertex
   if(USEBEAMSPOTIP) input_.SetBranchStatus("beamSpot*", 1);
+  if(eventProducer_.isMC()){
+    input_.SetBranchStatus("genParticles*", 1);
+    input_.SetBranchStatus("pu*", 1);
+  }
 
   susy::Event event;
   susy::TriggerEvent triggerEvent;
@@ -406,7 +444,8 @@ PhotonLeptonFilter::run()
   cutTree_->SetBranchAddress("lumi", &event.luminosityBlockNumber);
   cutTree_->SetBranchAddress("event", &event.eventNumber);
   bool cutflow[nCuts] = {true};
-  cutTree_->SetBranchAddress("cutflow", cutflow);
+  for(unsigned iC(0); iC != nCuts; ++iC)
+    cutTree_->SetBranchAddress(cuts[iC], cutflow + iC);
 
   /* TRIGGERS (ONLY FOR CUTFLOW - NO FILTERING DONE) */
 
@@ -459,10 +498,20 @@ PhotonLeptonFilter::run()
   std::bitset<susy::nMuonCriteria> muNoIP(susy::ObjectSelector::muReferences[susy::MuTight12]);
   muNoIP.reset(susy::MuDxy);
   muNoIP.reset(susy::MuDz);
+  std::bitset<susy::nMuonCriteria> muBaseline(susy::ObjectSelector::muReferences[susy::MuTight12]);
+  muBaseline.reset(susy::MuCombIso);
+  muBaseline.reset(susy::MuDxy);
+  muBaseline.reset(susy::MuDz);
   std::bitset<susy::nElectronCriteria> elIdResults;
   std::bitset<susy::nElectronCriteria> elNoIP(susy::ObjectSelector::elReferences[susy::ElMedium12]);
   elNoIP.reset(susy::ElD0);
   elNoIP.reset(susy::ElDZ);
+  std::bitset<susy::nElectronCriteria> elBaseline(susy::ObjectSelector::elReferences[susy::ElMedium12]);
+  elBaseline.reset(susy::ElCombIso);
+  elBaseline.reset(susy::ElDeltaEta);
+  elBaseline.reset(susy::ElDeltaPhi);
+  elBaseline.reset(susy::ElD0);
+  elBaseline.reset(susy::ElDZ);
   std::bitset<susy::nPhotonCriteria> phIdResults;
   std::bitset<susy::nPhotonCriteria> phNoVeto(susy::ObjectSelector::phReferences[susy::PhLoose12Pix]);
   phNoVeto.reset(susy::PhElectronVeto);
@@ -527,16 +576,18 @@ PhotonLeptonFilter::run()
 
       cutflow[kGoodVertex] = true;
 
-      if(radiationVetoThreshold_ != 0.){
-        double ptThreshold(std::abs(radiationVetoThreshold_));
-
+      if(storeRadiation_){
         susy::ParticleCollection const& genParticles(event.genParticles);
         unsigned nG(genParticles.size());
 
-        unsigned iG(0);
-        for(; iG != nG; ++iG){
+        radPt_ = 0.;
+        isFSR_ = false;
+
+        for(unsigned iG(0); iG != nG; ++iG){
           susy::Particle const& particle(genParticles[iG]);
-          if(particle.status != 1 || particle.pdgId != 22 || particle.momentum.Pt() < ptThreshold) continue; // not a photon
+          if(particle.status != 1 || particle.pdgId != 22) continue;
+          double pt(particle.momentum.Pt());
+          if(pt < 2. || pt < radPt_) continue;
 
           if(particle.mother && std::abs(particle.mother->pdgId) > 99) continue; // is fragmentation
           
@@ -553,26 +604,15 @@ PhotonLeptonFilter::run()
           }
           if(iso > 10.) continue; // is not isolated
 
-          if(radiationVetoThreshold_ < 0.){
-            short idx(particle.motherIndex);
-            while(idx != -1 && genParticles[idx].pdgId != 23 && std::abs(genParticles[idx].pdgId) != 24) idx = genParticles[idx].motherIndex;
-            if(idx != -1) continue; // is FSR
-          }
+          radPt_ = pt;
 
-          break;
+          short idx(particle.motherIndex);
+          while(idx != -1 && genParticles[idx].pdgId != 23 && std::abs(genParticles[idx].pdgId) != 24) idx = genParticles[idx].motherIndex;
+          isFSR_ = (idx != -1);
         }
-
-        if(iG != nG) continue;
       }
 
-      cutflow[kRadiationVeto] = true;
-
-      std::vector<std::pair<susy::Particle const*, float> > genPhotons;
-      std::vector<std::pair<susy::Particle const*, float> > genElectrons;
-      std::vector<std::pair<susy::Particle const*, float> > genMuons;
-      std::vector<susy::Photon const*> genMatchedPhotons;
-      std::vector<susy::Electron const*> genMatchedElectrons;
-      std::vector<susy::Muon const*> genMatchedMuons;
+      std::vector<GenMatch> genMatches;
 
       if(effTree_){
         susy::ParticleCollection const& genParticles(event.genParticles);
@@ -597,11 +637,19 @@ PhotonLeptonFilter::run()
           else if(dZ < dZPrim) effVars_.primVtx = false;
           ++effVars_.nVtx;
         }
+        
+        effVars_.puWeight = 1.;
+        for(unsigned iPU(0); iPU != event.pu.size(); ++iPU){
+          if(event.pu[iPU].BX != 0) continue;
+          effVars_.puWeight = eventProducer_.getPUWeight(event.pu[iPU].trueNumInteractions);
+          break;
+        }
 
         for(unsigned iG(0); iG != nG; ++iG){
           susy::Particle const& part(genParticles[iG]);
           if(part.status != 1 || !part.mother || std::abs(part.mother->pdgId) > 99) continue;
-          if(part.momentum.Pt() < 20.) continue;
+          double absEta(std::abs(part.momentum.Eta()));
+          if(part.momentum.Pt() < 20. || absEta > 3.) continue;
           unsigned absId(std::abs(part.pdgId));
           if(absId != 22 && absId != 11 && absId != 13) continue;
           if(absId == 11 || absId == 13){
@@ -609,6 +657,7 @@ PhotonLeptonFilter::run()
             while(mother && mother->pdgId != 23 && std::abs(mother->pdgId) != 24) mother = mother->mother;
             if(!mother) continue;
           }
+          else if(absEta > 1.6) continue;
 
           double iso(0.);
           for(unsigned iI(0); iI != nG; ++iI){
@@ -621,20 +670,7 @@ PhotonLeptonFilter::run()
             iso += isoP.momentum.Pt();
           }
 
-          switch(absId){
-          case 22:
-            genPhotons.push_back(std::make_pair(&part, iso));
-            genMatchedPhotons.push_back(0);
-            break;
-          case 11:
-            genElectrons.push_back(std::make_pair(&part, iso));
-            genMatchedElectrons.push_back(0);
-            break;
-          case 13:
-            genMuons.push_back(std::make_pair(&part, iso));
-            genMatchedMuons.push_back(0);
-            break;
-          }
+          genMatches.push_back(GenMatch(part, iso));
         }
       }
 
@@ -673,11 +709,19 @@ PhotonLeptonFilter::run()
       for(unsigned iPh(0); iPh != nPh; ++iPh){
         susy::Photon const& ph(*photons[iPh]);
 
+        unsigned iGen(0);
+        for(; iGen != genMatches.size(); ++iGen){
+          GenMatch& gen(genMatches[iGen]);
+          if(gen.particle->pdgId != 22) continue;
+          if(gen.particle->momentum.Vect().DeltaR(ph.caloPosition - gen.particle->vertex) < 0.1){
+            gen.photon = &ph;
+            break;
+          }
+        }
+
         if(ph.hadTowOverEm > 0.05) continue;
 
         susy::PhotonVars vars(ph, event);
-
-        if(vars.chargedHadronIso > 15. || vars.neutralHadronIso > 10. || vars.photonIso > 10.) continue;
 
         if(useSoftPhoton){
           if(((vars.iSubdet == 0 && ph.sigmaIetaIeta > 0.005) ||
@@ -692,7 +736,7 @@ PhotonLeptonFilter::run()
               ph_isSoftEle_[iPh] = true;
               ++nSoftElePhoton;
             }
-            else if(phIdResults[susy::PhElectronVeto]){
+            else if(phIdResults[susy::PhElectronVeto] && vars.chargedHadronIso < 15. && vars.neutralHadronIso < 10. && vars.photonIso < 10.){
               ph_isSoftFake_[iPh] = true;
               ++nSoftFakePhoton;
             }
@@ -750,13 +794,7 @@ PhotonLeptonFilter::run()
                     ph_isCand_[iPh] = true;
                     ++nCandPhoton;
 
-                    if(effTree_){
-                      for(unsigned iG(0); iG != genPhotons.size(); ++iG){
-                        susy::Particle const& genPhoton(*genPhotons[iG].first);
-                        if(genPhoton.momentum.Vect().DeltaR(ph.caloPosition - genPhoton.vertex) < 0.1)
-                          genMatchedPhotons[iG] = &ph;
-                      }
-                    }
+                    if(iGen != genMatches.size()) genMatches[iGen].pass = true;
                   }
                   else if((phIdResults & phNoVeto) == phNoVeto){
                     ph_isEle_[iPh] = true;
@@ -863,17 +901,27 @@ PhotonLeptonFilter::run()
 
         if(el.momentum.Pt() < 10.) break;
 
+        unsigned iGen(0);
+        for(; iGen != genMatches.size(); ++iGen){
+          GenMatch& gen(genMatches[iGen]);
+          if(std::abs(gen.particle->pdgId) != 11) continue;
+          if(gen.particle->momentum.DeltaR(el.momentum) < 0.05){
+            gen.electron = &el;
+            break;
+          }
+        }
+
         susy::ElectronVars vars(el, event);
 
         if(vars.isVeto) ++nVetoElectron;
 
         if(vars.pt < 25. || vars.iSubdet == -1) continue;
 
-        if(vars.combRelIso > 1.) continue;
+        susy::ObjectSelector::isGoodElectron(vars, susy::ElMedium12, &elIdResults);
+        if((elIdResults & elBaseline) != elBaseline) continue;
 
         bool isMedium(false);
         if(USEBEAMSPOTIP){
-          susy::ObjectSelector::isGoodElectron(vars, susy::ElMedium12, &elIdResults);
           if((elIdResults & elNoIP) == elNoIP)
             isMedium = std::abs(el.gsfTrack->dxy(event.beamSpot)) < 0.2;
         }
@@ -886,13 +934,7 @@ PhotonLeptonFilter::run()
           el_isCand_[iEl] = true;
           ++nCandElectron;
 
-          if(effTree_){
-            for(unsigned iG(0); iG != genElectrons.size(); ++iG){
-              susy::Particle const& genElectron(*genElectrons[iG].first);
-              if(genElectron.momentum.DeltaR(el.momentum) < 0.05)
-                genMatchedElectrons[iG] = &el;
-            }
-          }
+          if(iGen != genMatches.size()) genMatches[iGen].pass = true;
         }
         else{
           el_isFake_[iEl] = true;
@@ -980,7 +1022,19 @@ PhotonLeptonFilter::run()
 
         double pt(mu.momentum.Pt());
 
-        if(pt > 10. && std::abs(mu.momentum.Eta()) < 2.4) ++nVetoMuon;
+        if(pt < 10.) break;
+
+        unsigned iGen(0);
+        for(; iGen != genMatches.size(); ++iGen){
+          GenMatch& gen(genMatches[iGen]);
+          if(std::abs(gen.particle->pdgId) != 13) continue;
+          if(gen.particle->momentum.DeltaR(mu.momentum) < 0.05){
+            gen.muon = &mu;
+            break;
+          }
+        }
+
+        if(std::abs(mu.momentum.Eta()) < 2.4) ++nVetoMuon;
 
         if(pt < 25.) continue;
 
@@ -988,9 +1042,11 @@ PhotonLeptonFilter::run()
 
         if(vars.iSubdet == -1 || !vars.isLoose || vars.combRelIso > 1.) continue;
 
+        susy::ObjectSelector::isGoodMuon(vars, susy::MuTight12, &muIdResults);
+        if((muIdResults & muBaseline) != muBaseline) continue;
+
         bool isTight(false);
         if(USEBEAMSPOTIP){
-          susy::ObjectSelector::isGoodMuon(vars, susy::MuTight12, &muIdResults);
           if((muIdResults & muNoIP) == muNoIP){
             susy::Track const* track(vars.pt > 200. ? mu.highPtBestTrack : mu.bestTrack);
             if(!track) track = mu.innerTrack;
@@ -1007,13 +1063,7 @@ PhotonLeptonFilter::run()
           mu_isCand_[iMu] = true;
           ++nCandMuon;
 
-          if(effTree_){
-            for(unsigned iG(0); iG != genMuons.size(); ++iG){
-              susy::Particle const& genMuon(*genMuons[iG].first);
-              if(genMuon.momentum.DeltaR(mu.momentum) < 0.05)
-                genMatchedMuons[iG] = &mu;
-            }
-          }
+          if(iGen != genMatches.size()) genMatches[iGen].pass = true;
         }
         else{
           mu_isFake_[iMu] = true;
@@ -1086,65 +1136,42 @@ PhotonLeptonFilter::run()
       /* FILL GEN EFFICIENCY TREE */
 
       if(effTree_){
-        for(unsigned iG(0); iG != genPhotons.size(); ++iG){
-          effVars_.pdgId = 22;
-          effVars_.genPt = genPhotons[iG].first->momentum.Pt();
-          effVars_.genIso = genPhotons[iG].second;
-          susy::Photon const* reco(genMatchedPhotons[iG]);
-          if(reco){
-            effVars_.pass = true;
-            effVars_.pt = reco->momentum.Pt();
-            effVars_.eta = reco->caloPosition.Eta();
-            effVars_.phi = reco->caloPosition.Phi();
+        for(unsigned iG(0); iG != genMatches.size(); ++iG){
+          GenMatch& gen(genMatches[iG]);
+          susy::Particle const& part(*gen.particle);
+          effVars_.pdgId = part.pdgId;
+          effVars_.genPt = part.momentum.Pt();
+          effVars_.genEta = part.momentum.Eta();
+          effVars_.genPhi = part.momentum.Phi();
+          effVars_.genIso = gen.genIso;
+
+          if(gen.photon){
+            susy::Photon const& photon(*gen.photon);
+            effVars_.reco = true;
+            effVars_.pt = photon.momentum.Pt();
+            effVars_.eta = photon.caloPosition.Eta();
+            effVars_.phi = photon.caloPosition.Phi();
+          }
+          else if(gen.electron){
+            susy::Electron const& electron(*gen.electron);
+            effVars_.reco = true;
+            effVars_.pt = electron.momentum.Pt();
+            effVars_.eta = electron.superCluster->position.Eta();
+            effVars_.phi = electron.superCluster->position.Phi();
+          }
+          else if(gen.muon){
+            susy::Muon const& muon(*gen.muon);
+            effVars_.reco = true;
+            effVars_.pt = muon.momentum.Pt();
+            effVars_.eta = muon.momentum.Eta();
+            effVars_.phi = muon.momentum.Phi();
           }
           else{
-            effVars_.pass = false;
-            effVars_.pt = 0.;
-            effVars_.eta = 0.;
-            effVars_.phi = 0.;
-          }
-          
-          effTree_->Fill();
-        }
-
-        for(unsigned iG(0); iG != genElectrons.size(); ++iG){
-          effVars_.pdgId = genElectrons[iG].first->pdgId;
-          effVars_.genPt = genElectrons[iG].first->momentum.Pt();
-          effVars_.genIso = genElectrons[iG].second;
-          susy::Electron const* reco(genMatchedElectrons[iG]);
-          if(reco){
-            effVars_.pass = true;
-            effVars_.pt = reco->momentum.Pt();
-            effVars_.eta = reco->superCluster->position.Eta();
-            effVars_.phi = reco->superCluster->position.Phi();
-          }
-          else{
-            effVars_.pass = false;
-            effVars_.pt = 0.;
-            effVars_.eta = 0.;
-            effVars_.phi = 0.;
+            effVars_.reco = false;
+            effVars_.pt = effVars_.eta = effVars_.phi = 0.;
           }
 
-          effTree_->Fill();
-        }
-
-        for(unsigned iG(0); iG != genMuons.size(); ++iG){
-          effVars_.pdgId = genMuons[iG].first->pdgId;
-          effVars_.genPt = genMuons[iG].first->momentum.Pt();
-          effVars_.genIso = genMuons[iG].second;
-          susy::Muon const* reco(genMatchedMuons[iG]);
-          if(reco){
-            effVars_.pass = true;
-            effVars_.pt = reco->momentum.Pt();
-            effVars_.eta = reco->momentum.Eta();
-            effVars_.phi = reco->momentum.Phi();
-          }
-          else{
-            effVars_.pass = false;
-            effVars_.pt = 0.;
-            effVars_.eta = 0.;
-            effVars_.phi = 0.;
-          }
+          effVars_.pass = gen.pass;
 
           effTree_->Fill();
         }
@@ -1212,6 +1239,19 @@ PhotonLeptonFilter::run()
 
       /* EVENT PASSES AT LEAST ONE FILTER - LOAD FULL EVENT AND FILL OUTPUT */
 
+      for(iF = 0; iF != nHardPhotonFilters; ++iF){
+        if(filterResults_[iF]){
+          hardPhotonList_->Enter(evtTree_->GetEntries());
+          break;
+        }
+      }
+      for(iF = nHardPhotonFilters; iF != nFilterTypes; ++iF){
+        if(filterResults_[iF]){
+          softPhotonList_->Enter(evtTree_->GetEntries());
+          break;
+        }
+      }
+
       fullEvent.getEntry(iEntry);
 
       std::vector<const susy::PFJet*> jets(eventProducer_.sortJets(fullEvent.pfJets["ak5"]));
@@ -1276,6 +1316,8 @@ bool
 PhotonLeptonFilter::finalize()
 {
   outputFile_->cd();
+  hardPhotonList_->Write();
+  softPhotonList_->Write();
   evtTree_->Write();
   allObjTree_->Write();
   cutTree_->Write();
@@ -1284,6 +1326,8 @@ PhotonLeptonFilter::finalize()
   delete outputFile_;
 
   outputFile_ = 0;
+  hardPhotonList_ = 0;
+  softPhotonList_ = 0;
   evtTree_ = 0;
   allObjTree_ = 0;
   cutTree_ = 0;
@@ -1293,11 +1337,11 @@ PhotonLeptonFilter::finalize()
 }
 
 void
-filter(TString const& _configFileName, TString const& _inputPaths, TString const& _outputName, double _radiationVetoThreshold = 0.)
+filter(TString const& _configFileName, TString const& _inputPaths, TString const& _outputName, bool _storeRadiation = false)
 {
   PhotonLeptonFilter filter;
   filter.setThrow(true);
-  filter.initialize(_outputName, _configFileName, _radiationVetoThreshold);
+  filter.initialize(_outputName, _configFileName, _storeRadiation);
   filter.addInput(_inputPaths);
   filter.run();
   filter.clearInput();
