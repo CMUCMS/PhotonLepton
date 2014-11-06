@@ -335,8 +335,8 @@ PhotonLeptonFilter::initialize(char const* _outputDir, char const* _configFileNa
 
   outputFile_->cd();
 
-  hardPhotonList_ = new TEntryList("hardPhotons", "Hard photon events", evtTree_);
-  softPhotonList_ = new TEntryList("softPhotons", "Soft photon events", evtTree_);
+  hardPhotonList_ = new TEntryList("hardPhotonList", "Hard photon events", evtTree_);
+  softPhotonList_ = new TEntryList("softPhotonList", "Soft photon events", evtTree_);
 
   if(configRecords["PUSCENARIO"] != ""){
     effTree_ = new TTree("effTree", "Efficiency Tree");

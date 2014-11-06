@@ -13,8 +13,6 @@ for fileName in os.listdir(sourceDir):
     print fileName
 
     skimFile = ROOT.TFile.Open(sourceDir + fileName, 'update')
-    hardPhotons = skimFile.Get('hardPhotons')
-    softPhotons = skimFile.Get('softPhotons')
 
     cut = ''
 
@@ -30,26 +28,22 @@ for fileName in os.listdir(sourceDir):
     if cut:
         tree = skimFile.Get('eventVars')
 
-        hardPhotons.SetFileName(sourceDir + fileName)
-        hardPhotons.SetName('oldHardPhotons')
-        tree.SetEntryList(hardPhotons)
-        tree.GetEntryNumber(0) # needed to initialize the list
-        tree.Draw('>>hardPhotons', cut, 'entrylist')
-        hardPhotons = ROOT.gDirectory.Get('hardPhotons')
-    
-        softPhotons.SetFileName(sourceDir + fileName)
-        softPhotons.SetName('oldSoftPhotons')
-        tree.SetEntryList(softPhotons)
-        tree.GetEntryNumber(0) # needed to initialize the list
-        tree.Draw('>>softPhotons', cut, 'entrylist')        
-        softPhotons = ROOT.gDirectory.Get('softPhotons')
+        tree.Draw('>>hardPhotonList', '(PhotonAndElectron || PhotonAndMuon || ElePhotonAndElectron || ElePhotonAndMuon || FakePhotonAndElectron || FakePhotonAndMuon || PhotonAndFakeElectron || PhotonAndFakeMuon || ElePhotonAndFakeElectron || ElePhotonAndFakeMuon || FakePhotonAndFakeElectron || FakePhotonAndFakeMuon) && (' + cut + ')', 'entrylist')
+        hardPhotonList = ROOT.gDirectory.Get('hardPhotonList')
+        hardPhotonList.SetTitle('Hard photon events')
 
-        tree.SetEntryList(0)
+        tree.Draw('>>softPhotonList', '(SoftPhotonAndElectron || SoftPhotonAndMuon || SoftElePhotonAndElectron || SoftElePhotonAndMuon || SoftFakePhotonAndElectron || SoftFakePhotonAndMuon || SoftPhotonAndFakeElectron || SoftPhotonAndFakeMuon) && (' + cut + ')', 'entrylist')
+        softPhotonList = ROOT.gDirectory.Get('softPhotonList')
+        softPhotonList.SetTitle('Soft photon events')
 
-    hardPhotons.SetFileName('rooth://ncmu40/' + sourceDir + fileName)
-    hardPhotons.Write()
-    softPhotons.SetFileName('rooth://ncmu40/' + sourceDir + fileName)
-    softPhotons.Write()
+    else:
+        hardPhotonList = skimFile.Get('hardPhotonList')
+        softPhotonList = skimFile.Get('softPhotonList')
+
+    hardPhotonList.SetFileName('rooth://ncmu40/' + sourceDir + fileName)
+    hardPhotonList.Write()
+    softPhotonList.SetFileName('rooth://ncmu40/' + sourceDir + fileName)
+    softPhotonList.Write()
 
     skimFile.Close()
     

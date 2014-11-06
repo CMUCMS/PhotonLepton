@@ -3,6 +3,8 @@ import os
 import re
 import ROOT
 
+# TTJets SingleE SingleM WW
+
 sourceDir = '/store/glskim/'
 
 dataset = sys.argv[1]
